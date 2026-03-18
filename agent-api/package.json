@@ -1,0 +1,9 @@
+{
+  "name": "sur-agent-api",
+  "version": "0.1.0",
+  "description": "SUR Protocol - Agent REST API with x402 support and agent fee tiers",
+  "main": "dist/index.js",
+  "scripts": { "build": "tsc", "dev": "tsx watch src/index.ts", "start": "node dist/index.js" },
+  "dependencies": { "dotenv": "^16.4.0" },
+  "devDependencies": { "typescript": "^5.6.0", "tsx": "^4.19.0", "@types/node": "^22.0.0" }
+}

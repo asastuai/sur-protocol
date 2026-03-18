@@ -1,0 +1,10 @@
+{
+  "name": "sur-mcp-server",
+  "version": "0.1.0",
+  "description": "SUR Protocol - MCP Server for LLM integration (Claude, GPT, Gemini)",
+  "main": "dist/index.js",
+  "bin": { "sur-mcp": "dist/index.js" },
+  "scripts": { "build": "tsc", "dev": "tsx src/index.ts", "start": "node dist/index.js" },
+  "dependencies": { "dotenv": "^16.4.0" },
+  "devDependencies": { "typescript": "^5.6.0", "tsx": "^4.19.0", "@types/node": "^22.0.0" }
+}

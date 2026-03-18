@@ -1,0 +1,28 @@
+{
+  "name": "sur-api",
+  "version": "0.1.0",
+  "description": "SUR Protocol - Backend API: WebSocket server + settlement pipeline",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "viem": "^2.21.0",
+    "ws": "^8.18.0",
+    "dotenv": "^16.4.0",
+    "pino": "^9.0.0",
+    "pino-pretty": "^11.0.0",
+    "@supabase/supabase-js": "^2.45.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "tsx": "^4.19.0",
+    "@types/ws": "^8.5.0",
+    "@types/node": "^22.0.0",
+    "vitest": "^2.1.0"
+  }
+}

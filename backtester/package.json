@@ -1,0 +1,23 @@
+{
+  "name": "sur-backtester",
+  "version": "1.0.0",
+  "description": "SUR Protocol Monte Carlo Backtester — strategy optimization via random/grid search with adaptive brain",
+  "scripts": {
+    "backtest": "bun run run.ts --days=7 --capital=2000",
+    "backtest:30d": "bun run run.ts --days=30 --capital=2000",
+    "backtest:90d": "bun run run.ts --days=90 --capital=2000",
+    "backtest:365d": "bun run run.ts --days=365 --capital=2000",
+    "backtest:eth": "bun run run.ts --days=30 --capital=2000 --symbol=ETH-USD",
+    "lab": "bun run lab.ts --mode=hypothesis --days=365",
+    "lab:random": "bun run lab.ts --mode=random --n=20 --days=365",
+    "lab:grid": "bun run lab.ts --mode=grid --days=365",
+    "lab:leaderboard": "bun run lab.ts --leaderboard"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.0"
+  },
+  "devDependencies": {
+    "bun-types": "latest",
+    "tsx": "^4.0.0"
+  }
+}

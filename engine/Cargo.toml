@@ -1,0 +1,35 @@
+[package]
+name = "sur-engine"
+version = "0.1.0"
+edition = "2021"
+description = "SUR Protocol - Off-chain matching engine for perpetual futures"
+license = "BUSL-1.1"
+
+[dependencies]
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Unique IDs
+uuid = { version = "1", features = ["v4", "serde"] }
+
+# Timestamps
+chrono = { version = "0.4", features = ["serde"] }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Async runtime (for WebSocket API in Phase 1)
+tokio = { version = "1", features = ["full"] }
+
+# Ethereum types & signatures (for EIP-712 verification)
+# alloy-primitives = "0.7"
+
+[dev-dependencies]
+criterion = "0.5"
+rand = "0.8"
+
+[[bench]]
+name = "orderbook_bench"
+harness = false

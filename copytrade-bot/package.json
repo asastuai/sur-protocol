@@ -1,0 +1,17 @@
+{
+  "name": "sur-copytrade-bot",
+  "version": "1.0.0",
+  "description": "Copytrade bot for SUR Protocol — discover top traders and copy their positions",
+  "scripts": {
+    "profile": "bun run src/index.ts --mode=profile",
+    "copy": "bun run src/index.ts --mode=copy",
+    "paper": "bun run src/index.ts --mode=paper",
+    "paper:watch": "bun run src/index.ts --mode=paper --primary=0x..."
+  },
+  "dependencies": {
+    "dotenv": "^16.4.0"
+  },
+  "devDependencies": {
+    "bun-types": "latest"
+  }
+}

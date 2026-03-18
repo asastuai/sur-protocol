@@ -1,0 +1,2 @@
+timestamp,type,side,price,conditions_met,ema_cross,rsi_confirm,mfi_confirm,trend_align,volume_confirm,rsi,mfi,atr,bb_width,leverage,stop_loss,take_profit
+2026-03-02T03:38:00.563Z,ENTRY_LONG,LONG,66980.70,5,true,true,true,true,true,73.64,79.76,84.1784,0.5754,12,66812.34,67275.32

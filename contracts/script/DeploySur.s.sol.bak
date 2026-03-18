@@ -1,0 +1,84 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.24;
+
+import "forge-std/Script.sol";
+import "../src/PerpVault.sol";
+import "../src/PerpEngine.sol";
+import "../src/OrderSettlement.sol";
+
+/// @title DeploySur - Deploy full SUR Protocol to Base Sepolia
+/// @dev Usage: forge script script/DeploySur.s.sol:DeploySur --rpc-url base_sepolia --broadcast --verify
+contract DeploySur is Script {
+    // Base Sepolia USDC (Circle's official testnet USDC)
+    address constant BASE_SEPOLIA_USDC = 0x036CbD53842c5426634e7929541eC2318f3dCF7e;
+
+    // Config
+    uint256 constant INITIAL_DEPOSIT_CAP = 100_000 * 1e6; // $100k cap for testnet
+    uint256 constant BTC_INITIAL_PRICE = 50_000 * 1e6;
+    uint256 constant ETH_INITIAL_PRICE = 3_000 * 1e6;
+
+    function run() external {
+        uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
+        address deployer = vm.addr(deployerPrivateKey);
+
+        console.log("=== SUR Protocol - Full Deployment ===");
+        console.log("Deployer:", deployer);
+        console.log("Chain ID:", block.chainid);
+        console.log("");
+
+        vm.startBroadcast(deployerPrivateKey);
+
+        // 1. Deploy PerpVault
+        PerpVault vault = new PerpVault(
+            BASE_SEPOLIA_USDC,
+            deployer,
+            INITIAL_DEPOSIT_CAP
+        );
+        console.log("1. PerpVault deployed:", address(vault));
+
+        // 2. Deploy PerpEngine
+        PerpEngine engine = new PerpEngine(
+            address(vault),
+            deployer,    // reserve account (use separate address in prod)
+            deployer     // owner
+        );
+        console.log("2. PerpEngine deployed:", address(engine));
+
+        // 3. Deploy OrderSettlement
+        OrderSettlement settlement = new OrderSettlement(
+            address(engine),
+            address(vault),
+            deployer,    // fee recipient (use treasury in prod)
+            deployer     // owner
+        );
+        console.log("3. OrderSettlement deployed:", address(settlement));
+
+        // 4. Setup permission chain
+        vault.setOperator(address(engine), true);
+        vault.setOperator(address(settlement), true);
+        engine.setOperator(address(settlement), true);
+        engine.setOperator(deployer, true);
+        settlement.setOperator(deployer, true);
+        console.log("4. Permissions configured");
+
+        // 5. Add markets
+        engine.addMarket("BTC", "USD", 20, 300, 2, 6, 0);
+        engine.addMarket("ETH", "USD", 15, 500, 2, 6, 0);
+        console.log("5. Markets added (BTC-USD 20x, ETH-USD 15x)");
+
+        // 6. Set initial mark prices
+        bytes32 btcMarket = keccak256(abi.encodePacked("BTC", "-", "USD"));
+        bytes32 ethMarket = keccak256(abi.encodePacked("ETH", "-", "USD"));
+        engine.setMarkPrice(btcMarket, BTC_INITIAL_PRICE);
+        engine.setMarkPrice(ethMarket, ETH_INITIAL_PRICE);
+        console.log("6. Mark prices set");
+
+        vm.stopBroadcast();
+
+        console.log("");
+        console.log("=== Deployment Summary ===");
+        console.log("PerpVault:       ", address(vault));
+        console.log("PerpEngine:      ", address(engine));
+        console.log("OrderSettlement: ", address(settlement));
+    }
+}

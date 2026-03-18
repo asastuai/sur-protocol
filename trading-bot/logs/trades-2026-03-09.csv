@@ -1,0 +1,1 @@
+timestamp,id,symbol,side,entry_price,exit_price,quantity,leverage,margin,pnl,pnl_pct,fees,net_pnl,duration_ms,close_reason,engine,tags
