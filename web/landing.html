@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SUR Protocol — Where Agents Trade</title>
+<meta name="description" content="The first agent-native perpetual futures DEX on Base. Built for humans. Optimized for agents.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #06070A;
+  --surface: #0C0D12;
+  --card: #11121A;
+  --border: #1A1B25;
+  --text: #E2E4EB;
+  --muted: #5A5E72;
+  --accent: #0052FF;
+  --accent2: #3B82F6;
+  --green: #00D395;
+  --yellow: #FFB224;
+  --red: #FF4D6A;
+  --purple: #A78BFA;
+}
+
+* { margin:0; padding:0; box-sizing:border-box; }
+html { scroll-behavior: smooth; }
+body { font-family:'Outfit',sans-serif; background:var(--bg); color:var(--text); overflow-x:hidden; }
+
+/* ═══ NAV ═══ */
+nav {
+  position:fixed; top:0; width:100%; z-index:100;
+  background:rgba(6,7,10,0.85); backdrop-filter:blur(20px);
+  border-bottom:1px solid var(--border);
+}
+.nav-inner {
+  max-width:1200px; margin:0 auto; padding:0 2rem;
+  display:flex; align-items:center; justify-content:space-between; height:64px;
+}
+.logo { font-family:'JetBrains Mono',monospace; font-weight:700; font-size:1.1rem; color:var(--accent); letter-spacing:2px; }
+.logo span { color:var(--text); }
+.nav-links { display:flex; gap:2rem; align-items:center; }
+.nav-links a { color:var(--muted); text-decoration:none; font-size:0.85rem; font-weight:500; transition:color 0.2s; }
+.nav-links a:hover { color:var(--text); }
+.btn-sm { padding:0.5rem 1.2rem; border-radius:6px; font-size:0.8rem; font-weight:600; border:none; cursor:pointer; transition:all 0.2s; }
+.btn-primary { background:var(--accent); color:#fff; }
+.btn-primary:hover { background:#0066FF; transform:translateY(-1px); }
+.btn-ghost { background:transparent; color:var(--accent); border:1px solid var(--accent); }
+
+/* ═══ HERO ═══ */
+.hero {
+  min-height:100vh; display:flex; align-items:center; justify-content:center;
+  text-align:center; position:relative; padding:8rem 2rem 4rem;
+}
+.hero-bg {
+  position:absolute; inset:0; overflow:hidden;
+  background: radial-gradient(ellipse 60% 50% at 50% 40%, rgba(0,82,255,0.08) 0%, transparent 70%),
+              radial-gradient(ellipse 40% 30% at 30% 60%, rgba(0,211,149,0.04) 0%, transparent 60%);
+}
+.hero-grid {
+  position:absolute; inset:0;
+  background-image: linear-gradient(rgba(26,27,37,0.3) 1px, transparent 1px),
+                    linear-gradient(90deg, rgba(26,27,37,0.3) 1px, transparent 1px);
+  background-size: 80px 80px;
+  mask-image: radial-gradient(ellipse 70% 60% at 50% 40%, black, transparent);
+}
+.hero-content { position:relative; z-index:1; max-width:800px; }
+
+.hero-badge {
+  display:inline-flex; align-items:center; gap:0.5rem;
+  padding:0.4rem 1rem; border-radius:100px;
+  background:rgba(0,82,255,0.1); border:1px solid rgba(0,82,255,0.2);
+  font-size:0.75rem; color:var(--accent2); font-weight:500;
+  margin-bottom:2rem;
+  animation: fadeInUp 0.8s ease both;
+}
+.hero-badge .dot { width:6px; height:6px; border-radius:50%; background:var(--green); animation:pulse 2s infinite; }
+
+h1 {
+  font-size:clamp(2.8rem,6vw,4.5rem); font-weight:800; line-height:1.05;
+  letter-spacing:-0.03em; margin-bottom:1.5rem;
+  animation: fadeInUp 0.8s ease 0.1s both;
+}
+h1 .gradient {
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent2) 40%, var(--green) 100%);
+  -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text;
+}
+.hero-sub {
+  font-size:1.15rem; color:var(--muted); line-height:1.7; max-width:600px; margin:0 auto 2.5rem;
+  animation: fadeInUp 0.8s ease 0.2s both;
+}
+.hero-cta { display:flex; gap:1rem; justify-content:center; flex-wrap:wrap; animation: fadeInUp 0.8s ease 0.3s both; }
+.btn-lg { padding:0.8rem 2rem; border-radius:8px; font-size:0.95rem; font-weight:600; border:none; cursor:pointer; transition:all 0.25s; text-decoration:none; }
+.btn-lg.primary { background:var(--accent); color:#fff; }
+.btn-lg.primary:hover { background:#0066FF; transform:translateY(-2px); box-shadow:0 8px 30px rgba(0,82,255,0.3); }
+.btn-lg.ghost { background:transparent; color:var(--text); border:1px solid var(--border); }
+.btn-lg.ghost:hover { border-color:var(--muted); }
+
+/* ═══ CODE TERMINAL ═══ */
+.terminal {
+  max-width:620px; margin:3rem auto 0; text-align:left;
+  background:var(--surface); border:1px solid var(--border); border-radius:12px;
+  overflow:hidden;
+  animation: fadeInUp 0.8s ease 0.4s both;
+}
+.terminal-bar { display:flex; gap:6px; padding:12px 16px; background:rgba(0,0,0,0.3); }
+.terminal-dot { width:10px; height:10px; border-radius:50%; }
+.terminal-dot:nth-child(1) { background:#FF5F57; } .terminal-dot:nth-child(2) { background:#FEBC2E; } .terminal-dot:nth-child(3) { background:#28C840; }
+.terminal-code { padding:1.2rem 1.5rem; font-family:'JetBrains Mono',monospace; font-size:0.78rem; line-height:1.8; overflow-x:auto; }
+.terminal-code .comment { color:var(--muted); }
+.terminal-code .keyword { color:var(--purple); }
+.terminal-code .string { color:var(--green); }
+.terminal-code .func { color:var(--accent2); }
+.terminal-code .number { color:var(--yellow); }
+
+/* ═══ STATS BAR ═══ */
+.stats {
+  display:flex; justify-content:center; gap:4rem; padding:4rem 2rem;
+  border-bottom:1px solid var(--border);
+}
+.stat { text-align:center; }
+.stat-value { font-family:'JetBrains Mono',monospace; font-size:2rem; font-weight:700; color:var(--text); }
+.stat-value .accent { color:var(--accent); }
+.stat-label { font-size:0.8rem; color:var(--muted); margin-top:0.3rem; }
+
+/* ═══ SECTIONS ═══ */
+section { padding:6rem 2rem; }
+.container { max-width:1100px; margin:0 auto; }
+.section-label { font-family:'JetBrains Mono',monospace; font-size:0.75rem; color:var(--accent); letter-spacing:3px; text-transform:uppercase; margin-bottom:0.8rem; }
+.section-title { font-size:clamp(1.8rem,4vw,2.8rem); font-weight:700; line-height:1.15; letter-spacing:-0.02em; margin-bottom:1rem; }
+.section-sub { font-size:1rem; color:var(--muted); max-width:550px; line-height:1.7; }
+
+/* ═══ FEATURES GRID ═══ */
+.features-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:1.5rem; margin-top:3rem; }
+.feature-card {
+  background:var(--card); border:1px solid var(--border); border-radius:12px;
+  padding:2rem; transition:all 0.3s;
+}
+.feature-card:hover { border-color:rgba(0,82,255,0.3); transform:translateY(-4px); }
+.feature-icon { font-size:1.8rem; margin-bottom:1rem; }
+.feature-title { font-size:1rem; font-weight:600; margin-bottom:0.5rem; }
+.feature-desc { font-size:0.85rem; color:var(--muted); line-height:1.6; }
+
+/* ═══ AGENT SECTION ═══ */
+.agent-section { background:var(--surface); border-top:1px solid var(--border); border-bottom:1px solid var(--border); }
+.agent-grid { display:grid; grid-template-columns:1fr 1fr; gap:4rem; align-items:center; margin-top:3rem; }
+.agent-steps { display:flex; flex-direction:column; gap:1.5rem; }
+.agent-step {
+  display:flex; gap:1rem; align-items:flex-start;
+  padding:1.2rem; border-radius:10px; border:1px solid transparent;
+  transition:all 0.3s;
+}
+.agent-step:hover { background:rgba(0,82,255,0.05); border-color:var(--border); }
+.step-num {
+  width:32px; height:32px; border-radius:8px; flex-shrink:0;
+  display:flex; align-items:center; justify-content:center;
+  font-family:'JetBrains Mono',monospace; font-size:0.8rem; font-weight:700;
+  background:rgba(0,82,255,0.1); color:var(--accent);
+}
+.step-title { font-size:0.9rem; font-weight:600; margin-bottom:0.25rem; }
+.step-desc { font-size:0.8rem; color:var(--muted); line-height:1.5; }
+
+/* ═══ MARKETS ═══ */
+.markets-row { display:flex; gap:0.8rem; flex-wrap:wrap; margin-top:2rem; }
+.market-pill {
+  display:flex; align-items:center; gap:0.5rem;
+  padding:0.5rem 1rem; border-radius:100px;
+  background:var(--card); border:1px solid var(--border);
+  font-size:0.8rem; font-weight:500; transition:all 0.2s;
+}
+.market-pill:hover { border-color:var(--accent); }
+.market-pill .tag { font-size:0.65rem; padding:2px 6px; border-radius:4px; font-weight:600; }
+.tag-crypto { background:rgba(255,178,36,0.15); color:var(--yellow); }
+.tag-stock { background:rgba(167,139,250,0.15); color:var(--purple); }
+
+/* ═══ COMPARISON TABLE ═══ */
+.table-wrap { overflow-x:auto; margin-top:2rem; }
+table { width:100%; border-collapse:collapse; font-size:0.85rem; }
+thead th { text-align:left; padding:0.8rem 1rem; border-bottom:2px solid var(--border); color:var(--muted); font-weight:500; font-size:0.75rem; letter-spacing:1px; }
+thead th:first-child { color:var(--text); }
+tbody td { padding:0.7rem 1rem; border-bottom:1px solid var(--border); }
+tbody tr:hover { background:rgba(0,82,255,0.03); }
+.check { color:var(--green); font-weight:700; }
+.cross { color:var(--muted); }
+.sur-col { color:var(--accent); font-weight:600; }
+
+/* ═══ CTA ═══ */
+.cta-section { text-align:center; padding:6rem 2rem; }
+.cta-box {
+  max-width:700px; margin:0 auto; padding:4rem 3rem;
+  background: linear-gradient(135deg, rgba(0,82,255,0.08) 0%, rgba(0,211,149,0.05) 100%);
+  border:1px solid rgba(0,82,255,0.15); border-radius:20px;
+}
+.cta-box h2 { font-size:2.2rem; font-weight:700; margin-bottom:1rem; }
+.cta-box p { color:var(--muted); margin-bottom:2rem; line-height:1.6; }
+
+/* ═══ FOOTER ═══ */
+footer {
+  padding:3rem 2rem; border-top:1px solid var(--border);
+  text-align:center; font-size:0.8rem; color:var(--muted);
+}
+footer a { color:var(--accent); text-decoration:none; }
+footer .links { display:flex; justify-content:center; gap:2rem; margin-bottom:1rem; }
+
+/* ═══ ANIMATIONS ═══ */
+@keyframes fadeInUp { from { opacity:0; transform:translateY(20px); } to { opacity:1; transform:translateY(0); } }
+@keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.5; } }
+.fade-in { opacity:0; transform:translateY(30px); transition:all 0.7s ease; }
+.fade-in.visible { opacity:1; transform:translateY(0); }
+
+/* ═══ RESPONSIVE ═══ */
+@media(max-width:768px) {
+  .features-grid { grid-template-columns:1fr; }
+  .agent-grid { grid-template-columns:1fr; }
+  .stats { flex-direction:column; gap:2rem; }
+  .nav-links a:not(.btn-sm) { display:none; }
+}
+</style>
+</head>
+<body>
+
+<!-- NAV -->
+<nav>
+  <div class="nav-inner">
+    <div class="logo">SUR<span>PROTOCOL</span></div>
+    <div class="nav-links">
+      <a href="#features">Features</a>
+      <a href="#agents">Agents</a>
+      <a href="#markets">Markets</a>
+      <a href="https://docs.sur-protocol.xyz" target="_blank">Docs</a>
+      <a href="#" class="btn-sm btn-primary">Launch App</a>
+    </div>
+  </div>
+</nav>
+
+<!-- HERO -->
+<section class="hero">
+  <div class="hero-bg"></div>
+  <div class="hero-grid"></div>
+  <div class="hero-content">
+    <div class="hero-badge"><span class="dot"></span> Live on Base Sepolia Testnet</div>
+    <h1>Trade perpetuals.<br><span class="gradient">Where agents trade.</span></h1>
+    <p class="hero-sub">The first agent-native perpetual futures DEX on Base. Crypto perps, stock perps, yield-bearing collateral — built for humans, optimized for autonomous agents.</p>
+    <div class="hero-cta">
+      <a href="#" class="btn-lg primary">Start Trading</a>
+      <a href="#agents" class="btn-lg ghost">Build an Agent →</a>
+    </div>
+    <div class="terminal">
+      <div class="terminal-bar"><div class="terminal-dot"></div><div class="terminal-dot"></div><div class="terminal-dot"></div></div>
+      <pre class="terminal-code"><span class="comment">// Your AI agent trades on SUR in 5 lines</span>
+<span class="keyword">const</span> sur = <span class="keyword">new</span> <span class="func">SurClient</span>({ rpcUrl, contracts });
+
+<span class="keyword">await</span> sur.<span class="func">submitOrder</span>(agenticWallet, {
+  market: <span class="string">"BTC-USD"</span>,
+  side: <span class="string">"buy"</span>,
+  size: <span class="number">1.5</span>,
+  price: <span class="number">50000</span>,
+  hidden: <span class="number">true</span>,  <span class="comment">// invisible on orderbook</span>
+});</pre>
+    </div>
+  </div>
+</section>
+
+<!-- STATS -->
+<div class="stats">
+  <div class="stat"><div class="stat-value"><span class="accent">20K+</span></div><div class="stat-label">Lines of Code</div></div>
+  <div class="stat"><div class="stat-value"><span class="accent">187</span></div><div class="stat-label">Tests Passing</div></div>
+  <div class="stat"><div class="stat-value"><span class="accent">9</span></div><div class="stat-label">Smart Contracts</div></div>
+  <div class="stat"><div class="stat-value"><span class="accent">12</span></div><div class="stat-label">Markets (Crypto + Stock)</div></div>
+</div>
+
+<!-- FEATURES -->
+<section id="features">
+  <div class="container">
+    <div class="section-label">Features</div>
+    <div class="section-title">Everything a professional<br>trading protocol needs.</div>
+    <div class="section-sub">CEX-speed execution with DEX-level self-custody. No KYC, no geographic restrictions. Connect wallet and trade.</div>
+
+    <div class="features-grid">
+      <div class="feature-card">
+        <div class="feature-icon">⚡</div>
+        <div class="feature-title">Hybrid Architecture</div>
+        <div class="feature-desc">Off-chain matching engine for sub-millisecond execution. On-chain settlement on Base L2 for full transparency.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🔄</div>
+        <div class="feature-title">Cross Margin</div>
+        <div class="feature-desc">Share margin across all positions. Profits from BTC offset losses in ETH. Maximum capital efficiency.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">👁️‍🗨️</div>
+        <div class="feature-title">Hidden Orders</div>
+        <div class="feature-desc">Place large orders invisible to the public orderbook. Protect your strategy from front-running and market impact.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">📈</div>
+        <div class="feature-title">Stock Perpetuals</div>
+        <div class="feature-desc">Trade AAPL, TSLA, NVDA, AMZN, MSFT, GOOG, META, SPY 24/7 with up to 10x leverage via Pyth oracle feeds.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">💰</div>
+        <div class="feature-title">Yield Collateral</div>
+        <div class="feature-desc">Deposit cbETH, wstETH, or sUSDe as margin. Your collateral earns yield while you trade. Up to 15% APY.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🏦</div>
+        <div class="feature-title">Trading Vaults</div>
+        <div class="feature-desc">Deposit into vaults managed by top traders or AI agents. Share profits with transparent on-chain accounting.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- AGENT SECTION -->
+<section id="agents" class="agent-section">
+  <div class="container">
+    <div class="section-label">Agent-Native</div>
+    <div class="section-title">The DEX designed for<br>autonomous agents.</div>
+    <div class="section-sub">First-class support for AI agents via x402, Coinbase Agentic Wallets, and MCP. Agents get lower fees, dedicated APIs, and purpose-built infrastructure.</div>
+
+    <div class="agent-grid">
+      <div class="agent-steps">
+        <div class="agent-step">
+          <div class="step-num">1</div>
+          <div><div class="step-title">Agent REST API</div><div class="step-desc">Dedicated HTTP endpoints with batch operations, generous rate limits, and x402 payment support. No WebSocket required.</div></div>
+        </div>
+        <div class="agent-step">
+          <div class="step-num">2</div>
+          <div><div class="step-title">Agentic Wallet Integration</div><div class="step-desc">Native support for Coinbase Agentic Wallets. Agents sign transactions in TEEs, trade gaslessly on Base, with programmable spending limits.</div></div>
+        </div>
+        <div class="agent-step">
+          <div class="step-num">3</div>
+          <div><div class="step-title">MCP Server for LLMs</div><div class="step-desc">Tell Claude or GPT "buy 1 BTC at $50K on SUR" — our Model Context Protocol server translates natural language into trades.</div></div>
+        </div>
+        <div class="agent-step">
+          <div class="step-num">4</div>
+          <div><div class="step-title">Agent Fee Tiers</div><div class="step-desc">Registered agents start at 0.015% maker / 0.05% taker — 25% cheaper than humans. Volume-based tiers down to 0% maker.</div></div>
+        </div>
+        <div class="agent-step">
+          <div class="step-num">5</div>
+          <div><div class="step-title">Agent Vaults</div><div class="step-desc">AI agents can manage trading vaults. Humans deposit, the agent trades 24/7. Transparent performance tracking on-chain.</div></div>
+        </div>
+      </div>
+
+      <div class="terminal" style="margin:0;">
+        <div class="terminal-bar"><div class="terminal-dot"></div><div class="terminal-dot"></div><div class="terminal-dot"></div></div>
+        <pre class="terminal-code"><span class="comment">// Agent fee tiers — better than human rates</span>
+
+<span class="keyword">Standard</span>  <span class="number">0.015%</span> / <span class="number">0.05%</span>  <span class="comment">// at registration</span>
+<span class="keyword">Silver</span>    <span class="number">0.010%</span> / <span class="number">0.04%</span>  <span class="comment">// $1M volume</span>
+<span class="keyword">Gold</span>      <span class="number">0.005%</span> / <span class="number">0.03%</span>  <span class="comment">// $10M volume</span>
+<span class="keyword">Platinum</span>  <span class="number">0.000%</span> / <span class="number">0.02%</span>  <span class="comment">// $100M volume</span>
+
+<span class="comment">// x402 discovery</span>
+GET /.well-known/x402
+{
+  <span class="string">"service"</span>: <span class="string">"SUR Protocol"</span>,
+  <span class="string">"payment"</span>: { <span class="string">"asset"</span>: <span class="string">"USDC"</span>, <span class="string">"network"</span>: <span class="string">"base"</span> }
+}
+
+<span class="comment">// MCP: Claude trades on SUR</span>
+<span class="func">sur_submit_order</span>({
+  market: <span class="string">"TSLA-USD"</span>,
+  side: <span class="string">"buy"</span>,
+  size: <span class="number">100</span>,
+  price: <span class="number">250.50</span>
+})</pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- MARKETS -->
+<section id="markets">
+  <div class="container">
+    <div class="section-label">Markets</div>
+    <div class="section-title">Crypto + Stock perpetuals.<br>All 24/7.</div>
+    <div class="section-sub">Up to 20x leverage on crypto, 10x on stocks. USDC collateral. Prices from Pyth + Chainlink.</div>
+
+    <div class="markets-row">
+      <div class="market-pill"><span class="tag tag-crypto">CRYPTO</span> BTC-USD <span style="color:var(--muted)">20x</span></div>
+      <div class="market-pill"><span class="tag tag-crypto">CRYPTO</span> ETH-USD <span style="color:var(--muted)">20x</span></div>
+      <div class="market-pill"><span class="tag tag-crypto">CRYPTO</span> SOL-USD <span style="color:var(--muted)">20x</span></div>
+      <div class="market-pill"><span class="tag tag-stock">STOCK</span> AAPL <span style="color:var(--muted)">10x</span></div>
+      <div class="market-pill"><span class="tag tag-stock">STOCK</span> TSLA <span style="color:var(--muted)">10x</span></div>
+      <div class="market-pill"><span class="tag tag-stock">STOCK</span> NVDA <span style="color:var(--muted)">10x</span></div>
+      <div class="market-pill"><span class="tag tag-stock">STOCK</span> AMZN <span style="color:var(--muted)">10x</span></div>
+      <div class="market-pill"><span class="tag tag-stock">STOCK</span> MSFT <span style="color:var(--muted)">10x</span></div>
+      <div class="market-pill"><span class="tag tag-stock">STOCK</span> GOOG <span style="color:var(--muted)">10x</span></div>
+      <div class="market-pill"><span class="tag tag-stock">STOCK</span> META <span style="color:var(--muted)">10x</span></div>
+      <div class="market-pill"><span class="tag tag-stock">INDEX</span> SPY <span style="color:var(--muted)">12x</span></div>
+      <div class="market-pill"><span class="tag tag-stock">STOCK</span> COIN <span style="color:var(--muted)">8x</span></div>
+    </div>
+
+    <div class="table-wrap" style="margin-top:3rem;">
+      <table>
+        <thead>
+          <tr>
+            <th>FEATURE</th>
+            <th class="sur-col">SUR</th>
+            <th>Hyperliquid</th>
+            <th>Aster</th>
+            <th>dYdX</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>Agent-Native (x402 + MCP)</td><td class="sur-col check">✓</td><td class="cross">✗</td><td class="cross">✗</td><td class="cross">✗</td></tr>
+          <tr><td>Agent Fee Tiers</td><td class="sur-col check">✓</td><td class="cross">✗</td><td class="cross">✗</td><td class="cross">✗</td></tr>
+          <tr><td>Hidden Orders</td><td class="sur-col check">✓</td><td class="cross">✗</td><td class="check">✓</td><td class="cross">✗</td></tr>
+          <tr><td>Cross Margin</td><td class="sur-col check">✓</td><td class="check">✓</td><td class="check">✓</td><td class="check">✓</td></tr>
+          <tr><td>Stock Perpetuals</td><td class="sur-col check">✓</td><td>Partial</td><td class="check">✓</td><td class="cross">✗</td></tr>
+          <tr><td>Yield-Bearing Collateral</td><td class="sur-col check">✓</td><td class="cross">✗</td><td class="check">✓</td><td class="cross">✗</td></tr>
+          <tr><td>Trading Vaults</td><td class="sur-col check">✓</td><td class="check">✓</td><td class="check">✓</td><td class="cross">✗</td></tr>
+          <tr><td>Built on Base</td><td class="sur-col check">✓</td><td class="cross">Own L1</td><td class="cross">Multi</td><td class="cross">Cosmos</td></tr>
+          <tr><td>Non-Custodial</td><td class="sur-col check">✓</td><td class="check">✓</td><td class="check">✓</td><td class="check">✓</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- CTA -->
+<section class="cta-section">
+  <div class="cta-box">
+    <h2>Ready to trade?</h2>
+    <p>Connect your wallet or deploy your agent. No KYC, no restrictions.<br>Built on Base L2 — sub-cent gas, instant finality.</p>
+    <div style="display:flex; gap:1rem; justify-content:center; flex-wrap:wrap;">
+      <a href="#" class="btn-lg primary">Launch App</a>
+      <a href="https://github.com/sur-protocol" class="btn-lg ghost" target="_blank">GitHub</a>
+      <a href="#" class="btn-lg ghost">Read Whitepaper</a>
+    </div>
+  </div>
+</section>
+
+<!-- FOOTER -->
+<footer>
+  <div class="links">
+    <a href="https://github.com/sur-protocol" target="_blank">GitHub</a>
+    <a href="https://docs.sur-protocol.xyz" target="_blank">Docs</a>
+    <a href="https://twitter.com/surprotocol" target="_blank">Twitter</a>
+    <a href="https://discord.gg/surprotocol" target="_blank">Discord</a>
+  </div>
+  <p>© 2026 SUR Protocol. Built for humans. Optimized for agents.</p>
+</footer>
+
+<script>
+// Scroll fade-in
+const observer = new IntersectionObserver((entries) => {
+  entries.forEach(e => { if (e.isIntersecting) e.target.classList.add('visible'); });
+}, { threshold: 0.1 });
+document.querySelectorAll('.feature-card, .agent-step, .stat').forEach(el => {
+  el.classList.add('fade-in');
+  observer.observe(el);
+});
+</script>
+</body>
+</html>
