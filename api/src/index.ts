@@ -26,6 +26,9 @@ import { loadConfig } from "./config/index.js";
 import { SettlementPipeline } from "./settlement/pipeline.js";
 import { SurWebSocketServer } from "./ws/server.js";
 import { OnChainIndexer } from "./indexer/onchain.js";
+import { registerBotRoutes, handleBotRoute } from "./routes/bot.js";
+import { registerCopytradeRoutes, handleCopytradeRoute } from "./routes/copytrade.js";
+import { registerBacktesterRoutes, handleBacktesterRoute } from "./routes/backtester.js";
 import { initSupabase } from "./db/supabase.js";
 
 const startedAt = Date.now();
@@ -78,12 +81,34 @@ async function main() {
   const httpServer = createServer((req: IncomingMessage, res: ServerResponse) => {
     // CORS headers for browser access
     res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
     if (req.method === "OPTIONS") {
       res.writeHead(204);
       res.end();
+      return;
+    }
+
+    // Bot control routes
+    if (req.url?.startsWith("/api/bot/")) {
+      if (handleBotRoute(req, res)) return;
+    }
+
+    // Copy trading routes
+    if (req.url?.startsWith("/api/copytrade/")) {
+      if (handleCopytradeRoute(req, res)) return;
+    }
+
+    // Backtester routes (async — reads POST body)
+    if (req.url?.startsWith("/api/backtester/")) {
+      handleBacktesterRoute(req, res).catch((err) => {
+        console.error("[Backtester] Route error:", err);
+        if (!res.headersSent) {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Internal server error" }));
+        }
+      });
       return;
     }
 
@@ -115,6 +140,15 @@ async function main() {
     res.writeHead(404, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ error: "Not found" }));
   });
+
+  // Register bot control routes
+  registerBotRoutes(httpServer);
+
+  // Register copy trading routes
+  registerCopytradeRoutes(httpServer);
+
+  // Register backtester routes
+  registerBacktesterRoutes(httpServer);
 
   // Attach WebSocket to the HTTP server (shared port for Railway)
   wsServer.attachToServer(httpServer);

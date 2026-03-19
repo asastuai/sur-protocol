@@ -14,6 +14,9 @@ const NAV_ITEMS = [
 ] as const;
 
 const MORE_ITEMS = [
+  { label: "Trading Bot", href: "/trading-bot", desc: "AI-powered auto trading" },
+  { label: "Copy Trading", href: "/copytrade", desc: "Mirror top traders" },
+  { label: "Backtester", href: "/backtester", desc: "Monte Carlo strategy lab" },
   { label: "Developers", href: "/developers", desc: "Agent SDK, API & MCP" },
   { label: "Leaderboard", href: "/leaderboard", desc: "Top trader rankings" },
   { label: "Referrals", href: "/referrals", desc: "Earn from referrals" },
