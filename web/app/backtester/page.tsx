@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef } from "react";
 
 // ============================================================
 //  API BASE URL
@@ -79,12 +79,6 @@ interface BacktestResults {
   tradeLog?: TradeEntry[];
 }
 
-interface BacktestStatus {
-  status: "idle" | "running" | "complete" | "error";
-  progress?: number;
-  message?: string;
-}
-
 // ============================================================
 //  HELPERS
 // ============================================================
@@ -154,6 +148,19 @@ function IconList({ className = "" }: { className?: string }) {
   );
 }
 
+function IconCpu({ className = "" }: { className?: string }) {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <rect x="4" y="4" width="16" height="16" rx="2" />
+      <rect x="9" y="9" width="6" height="6" />
+      <line x1="9" y1="1" x2="9" y2="4" /><line x1="15" y1="1" x2="15" y2="4" />
+      <line x1="9" y1="20" x2="9" y2="23" /><line x1="15" y1="20" x2="15" y2="23" />
+      <line x1="20" y1="9" x2="23" y2="9" /><line x1="20" y1="15" x2="23" y2="15" />
+      <line x1="1" y1="9" x2="4" y2="9" /><line x1="1" y1="15" x2="4" y2="15" />
+    </svg>
+  );
+}
+
 // ============================================================
 //  STAT CARD
 // ============================================================
@@ -198,6 +205,19 @@ function RankBadge({ rank }: { rank: number }) {
 }
 
 // ============================================================
+//  LOCAL COMPUTE BADGE
+// ============================================================
+
+function LocalBadge() {
+  return (
+    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-sur-accent/10 border border-sur-accent/20 text-[10px] font-medium text-sur-accent">
+      <IconCpu className="text-sur-accent" />
+      Runs locally on your device
+    </span>
+  );
+}
+
+// ============================================================
 //  PAGE
 // ============================================================
 
@@ -213,7 +233,7 @@ export default function BacktesterPage() {
   );
 
   // UI state
-  const [status, setStatus] = useState<"idle" | "running" | "complete" | "error">("idle");
+  const [status, setStatus] = useState<"idle" | "loading" | "running" | "complete" | "error">("idle");
   const [progress, setProgress] = useState(0);
   const [errorMsg, setErrorMsg] = useState("");
   const [showTradeLog, setShowTradeLog] = useState(false);
@@ -221,128 +241,99 @@ export default function BacktesterPage() {
   // Results state
   const [results, setResults] = useState<BacktestResults | null>(null);
 
-  // Polling ref
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Worker ref
+  const workerRef = useRef<Worker | null>(null);
 
-  const stopPolling = useCallback(() => {
-    if (pollRef.current) {
-      clearInterval(pollRef.current);
-      pollRef.current = null;
-    }
-  }, []);
-
-  // Fetch results from API
-  const fetchResults = useCallback(async () => {
-    try {
-      const res = await fetch(`${API}/api/backtester/results`);
-      if (!res.ok) throw new Error("Failed to fetch results");
-      const data = await res.json();
-      setResults(data);
-      setStatus("complete");
-    } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : "Failed to fetch results");
-      setStatus("error");
-    }
-  }, []);
-
-  // Poll status while running
-  const startPolling = useCallback(() => {
-    stopPolling();
-    pollRef.current = setInterval(async () => {
-      try {
-        const res = await fetch(`${API}/api/backtester/status`);
-        if (!res.ok) throw new Error("Status check failed");
-        const data: BacktestStatus = await res.json();
-
-        if (data.progress !== undefined) {
-          setProgress(data.progress);
-        }
-
-        if (data.status === "complete") {
-          stopPolling();
-          await fetchResults();
-        } else if (data.status === "error") {
-          stopPolling();
-          setErrorMsg(data.message || "Backtest failed");
-          setStatus("error");
-        }
-      } catch (err) {
-        stopPolling();
-        setErrorMsg(err instanceof Error ? err.message : "Connection lost");
-        setStatus("error");
-      }
-    }, 500);
-  }, [stopPolling, fetchResults]);
-
-  // Check for previous results on mount
+  // Terminate worker on unmount
   useEffect(() => {
-    let cancelled = false;
-
-    async function checkPreviousResults() {
-      try {
-        const statusRes = await fetch(`${API}/api/backtester/status`);
-        if (!statusRes.ok) return;
-        const statusData: BacktestStatus = await statusRes.json();
-
-        if (cancelled) return;
-
-        if (statusData.status === "running") {
-          setStatus("running");
-          setProgress(statusData.progress || 0);
-          startPolling();
-        } else if (statusData.status === "complete") {
-          await fetchResults();
-        }
-      } catch {
-        // API not available — stay in idle state
-      }
-    }
-
-    checkPreviousResults();
-
     return () => {
-      cancelled = true;
-      stopPolling();
+      workerRef.current?.terminate();
     };
-  }, [startPolling, fetchResults, stopPolling]);
+  }, []);
 
   const toggleEngine = (name: string) => {
     setEngines(prev => ({ ...prev, [name]: !prev[name] }));
   };
 
   const handleRun = async () => {
-    setStatus("running");
+    // Terminate any existing worker
+    workerRef.current?.terminate();
+    workerRef.current = null;
+
+    setStatus("loading");
     setProgress(0);
     setResults(null);
     setErrorMsg("");
 
-    const config = {
-      market,
-      period,
-      capital: parseFloat(capital) || 100000,
-      mode,
-      iterations: mode !== "single" ? parseInt(iterations) || 500 : 1,
-      engines: Object.entries(engines)
-        .filter(([, active]) => active)
-        .map(([name]) => name),
-    };
+    const enabledEngines = Object.entries(engines)
+      .filter(([, active]) => active)
+      .map(([name]) => name);
 
+    if (enabledEngines.length === 0) {
+      setErrorMsg("Select at least one engine.");
+      setStatus("error");
+      return;
+    }
+
+    // Step 1: Fetch price data from API
     try {
-      const res = await fetch(`${API}/api/backtester/run`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(config),
-      });
-
+      const res = await fetch(`${API}/api/prices/${market}?period=${period}`);
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        throw new Error(body.message || `Server returned ${res.status}`);
+        throw new Error(body.message || `Failed to fetch price data (${res.status})`);
+      }
+      const priceData = await res.json();
+
+      if (!priceData.candles || priceData.candles.length === 0) {
+        throw new Error("No price data available for the selected market and period.");
       }
 
-      // Start polling for status
-      startPolling();
+      // Step 2: Create Web Worker and run backtest
+      setStatus("running");
+
+      const worker = new Worker("/backtester-worker.js");
+      workerRef.current = worker;
+
+      worker.onmessage = (e: MessageEvent) => {
+        const { type } = e.data;
+
+        if (type === "progress") {
+          setProgress(e.data.progress);
+        } else if (type === "complete") {
+          setResults(e.data.results);
+          setStatus("complete");
+          worker.terminate();
+          workerRef.current = null;
+        } else if (type === "error") {
+          setErrorMsg(e.data.error);
+          setStatus("error");
+          worker.terminate();
+          workerRef.current = null;
+        }
+      };
+
+      worker.onerror = (err) => {
+        setErrorMsg(err.message || "Worker encountered an unexpected error.");
+        setStatus("error");
+        worker.terminate();
+        workerRef.current = null;
+      };
+
+      // Send config + candles to the worker
+      worker.postMessage({
+        type: "run",
+        config: {
+          market,
+          period,
+          capital: parseFloat(capital) || 100000,
+          mode,
+          iterations: mode !== "single" ? parseInt(iterations) || 500 : 1,
+          engines: enabledEngines,
+          candles: priceData.candles,
+        },
+      });
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : "Failed to start backtest");
+      setErrorMsg(err instanceof Error ? err.message : "Failed to fetch price data");
       setStatus("error");
     }
   };
@@ -373,6 +364,8 @@ export default function BacktesterPage() {
     return { ...d, cumPnl: cumulative };
   });
 
+  const isRunning = status === "running" || status === "loading";
+
   return (
     <div className="h-full overflow-y-auto">
       <div className="max-w-6xl mx-auto px-6 py-8">
@@ -395,29 +388,32 @@ export default function BacktesterPage() {
               </p>
             </div>
           </div>
-          <button
-            onClick={handleRun}
-            disabled={status === "running"}
-            className={`flex items-center gap-2 px-5 py-2.5 text-[12px] font-semibold rounded-lg transition-all ${
-              status === "running"
-                ? "bg-sur-accent/50 text-white/60 cursor-wait"
-                : "bg-sur-accent text-white hover:bg-sur-accent/90 active:scale-[0.98]"
-            }`}
-          >
-            {status === "running" ? (
-              <>
-                <svg className="animate-spin" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
-                </svg>
-                Running...
-              </>
-            ) : (
-              <>
-                <IconPlay />
-                Run Backtest
-              </>
-            )}
-          </button>
+          <div className="flex items-center gap-3">
+            <LocalBadge />
+            <button
+              onClick={handleRun}
+              disabled={isRunning}
+              className={`flex items-center gap-2 px-5 py-2.5 text-[12px] font-semibold rounded-lg transition-all ${
+                isRunning
+                  ? "bg-sur-accent/50 text-white/60 cursor-wait"
+                  : "bg-sur-accent text-white hover:bg-sur-accent/90 active:scale-[0.98]"
+              }`}
+            >
+              {isRunning ? (
+                <>
+                  <svg className="animate-spin" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
+                  </svg>
+                  {status === "loading" ? "Fetching..." : "Running..."}
+                </>
+              ) : (
+                <>
+                  <IconPlay />
+                  Run Backtest
+                </>
+              )}
+            </button>
+          </div>
         </div>
 
         {/* ===== CONFIGURATION PANEL ===== */}
@@ -546,6 +542,20 @@ export default function BacktesterPage() {
           </div>
         </div>
 
+        {/* ===== LOADING STATE — Fetching prices ===== */}
+        {status === "loading" && (
+          <div className="bg-sur-surface border border-sur-border rounded-xl p-12 mb-6 flex flex-col items-center justify-center">
+            <div className="relative w-12 h-12 mb-4">
+              <div className="absolute inset-0 rounded-full border-2 border-sur-border" />
+              <div className="absolute inset-0 rounded-full border-2 border-sur-accent border-t-transparent animate-spin" />
+            </div>
+            <p className="text-[13px] font-medium mb-1">Fetching historical prices...</p>
+            <p className="text-[11px] text-sur-muted">
+              Downloading {market} candles for the past {period.toUpperCase()}
+            </p>
+          </div>
+        )}
+
         {/* ===== RUNNING STATE WITH PROGRESS ===== */}
         {status === "running" && (
           <div className="bg-sur-surface border border-sur-border rounded-xl p-12 mb-6 flex flex-col items-center justify-center">
@@ -553,12 +563,12 @@ export default function BacktesterPage() {
               <div className="absolute inset-0 rounded-full border-2 border-sur-border" />
               <div className="absolute inset-0 rounded-full border-2 border-sur-accent border-t-transparent animate-spin" />
             </div>
-            <p className="text-[13px] font-medium mb-1">Running Monte Carlo simulation...</p>
+            <p className="text-[13px] font-medium mb-1">Running backtest on your device...</p>
             <p className="text-[11px] text-sur-muted mb-4">
               {mode !== "single" ? iterations : "1"} iteration{mode !== "single" ? "s" : ""} across {Object.values(engines).filter(Boolean).length} engines on {market}
             </p>
             {/* Progress bar */}
-            <div className="w-full max-w-xs">
+            <div className="w-full max-w-xs mb-4">
               <div className="flex items-center justify-between mb-1">
                 <span className="text-[10px] text-sur-muted">Progress</span>
                 <span className="text-[10px] text-sur-accent font-semibold tabular-nums">{Math.round(progress)}%</span>
@@ -569,6 +579,10 @@ export default function BacktesterPage() {
                   style={{ width: `${Math.min(100, Math.max(0, progress))}%` }}
                 />
               </div>
+            </div>
+            <div className="flex items-center gap-1.5 text-[10px] text-sur-muted">
+              <IconCpu className="text-sur-muted" />
+              <span>Computation runs locally on your browser — no server load</span>
             </div>
           </div>
         )}

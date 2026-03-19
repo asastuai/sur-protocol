@@ -29,6 +29,7 @@ import { OnChainIndexer } from "./indexer/onchain.js";
 import { registerBotRoutes, handleBotRoute } from "./routes/bot.js";
 import { registerCopytradeRoutes, handleCopytradeRoute } from "./routes/copytrade.js";
 import { registerBacktesterRoutes, handleBacktesterRoute } from "./routes/backtester.js";
+import { registerPricesRoutes, handlePricesRoute } from "./routes/prices.js";
 import { initSupabase } from "./db/supabase.js";
 
 const startedAt = Date.now();
@@ -100,6 +101,11 @@ async function main() {
       if (handleCopytradeRoute(req, res)) return;
     }
 
+    // Price data routes (async — fetches from Binance)
+    if (req.url?.startsWith("/api/prices/")) {
+      if (handlePricesRoute(req, res)) return;
+    }
+
     // Backtester routes (async — reads POST body)
     if (req.url?.startsWith("/api/backtester/")) {
       handleBacktesterRoute(req, res).catch((err) => {
@@ -149,6 +155,9 @@ async function main() {
 
   // Register backtester routes
   registerBacktesterRoutes(httpServer);
+
+  // Register prices routes
+  registerPricesRoutes(httpServer);
 
   // Attach WebSocket to the HTTP server (shared port for Railway)
   wsServer.attachToServer(httpServer);
