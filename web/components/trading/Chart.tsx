@@ -225,7 +225,7 @@ export function Chart({ market }: ChartProps) {
   // ---- Shared chart config ----
   const getChartOpts = (w: number, h: number, showTimeAxis: boolean) => ({
     width: w, height: h,
-    layout: { background: { color: "#161618" }, textColor: "#6b7280", fontSize: 11, fontFamily: "DM Sans, system-ui, sans-serif" },
+    layout: { background: { color: "#1c1c20" }, textColor: "#6b7280", fontSize: 11, fontFamily: "DM Sans, system-ui, sans-serif" },
     grid: { vertLines: { color: "transparent" }, horzLines: { color: "transparent" } },
     rightPriceScale: { borderColor: "#28282e", autoScale: true },
     timeScale: { borderColor: "#28282e", timeVisible: true, secondsVisible: false, barSpacing: 8, visible: showTimeAxis },
@@ -252,7 +252,7 @@ export function Chart({ market }: ChartProps) {
       const mainH = mainContainerRef.current.clientHeight || 300;
       const mainChart = createChart(mainContainerRef.current, {
         ...getChartOpts(mainW, mainH, !hasSubIndicator),
-        layout: { background: { type: ColorType.Solid, color: "#161618" }, textColor: "#6b7280", fontSize: 11, fontFamily: "DM Sans, system-ui, sans-serif" },
+        layout: { background: { type: ColorType.Solid, color: "#1c1c20" }, textColor: "#6b7280", fontSize: 11, fontFamily: "DM Sans, system-ui, sans-serif" },
         rightPriceScale: { borderColor: "#28282e", scaleMargins: { top: 0.05, bottom: 0.05 }, autoScale: true },
         crosshair: {
           mode: mod.CrosshairMode.Normal,
@@ -348,7 +348,7 @@ export function Chart({ market }: ChartProps) {
       const volH = volContainerRef.current!.clientHeight || 80;
       const volChart = createChart(volContainerRef.current!, {
         ...getChartOpts(volW, volH, !hasSubIndicator),
-        layout: { background: { type: ColorType.Solid, color: "#161618" }, textColor: "#6b7280", fontSize: 10, fontFamily: "DM Sans, system-ui, sans-serif" },
+        layout: { background: { type: ColorType.Solid, color: "#1c1c20" }, textColor: "#6b7280", fontSize: 10, fontFamily: "DM Sans, system-ui, sans-serif" },
         rightPriceScale: { borderColor: "#28282e", scaleMargins: { top: 0.1, bottom: 0 }, autoScale: true },
       });
       charts.push(volChart);
@@ -376,7 +376,7 @@ export function Chart({ market }: ChartProps) {
         const subH2 = subContainerRef.current.clientHeight || 100;
         const subChart = createChart(subContainerRef.current, {
           ...getChartOpts(subW, subH2, true),
-          layout: { background: { type: ColorType.Solid, color: "#161618" }, textColor: "#6b7280", fontSize: 10, fontFamily: "DM Sans, system-ui, sans-serif" },
+          layout: { background: { type: ColorType.Solid, color: "#1c1c20" }, textColor: "#6b7280", fontSize: 10, fontFamily: "DM Sans, system-ui, sans-serif" },
           rightPriceScale: { borderColor: "#28282e", scaleMargins: { top: 0.1, bottom: 0.1 }, autoScale: true },
         });
         charts.push(subChart);
@@ -911,7 +911,7 @@ export function Chart({ market }: ChartProps) {
   };
 
   return (
-    <div className={`flex flex-col h-full ${isFullscreen ? "fixed inset-0 z-50" : ""}`} style={{ background: "#161618" }}>
+    <div className={`flex flex-col h-full ${isFullscreen ? "fixed inset-0 z-50" : ""}`} style={{ background: "#1c1c20" }}>
       {/* ===== TOP TOOLBAR ===== */}
       <div className="flex items-center border-b border-[#28282e] flex-shrink-0 h-9">
         {/* Left section: timeframes + chart type + indicators */}

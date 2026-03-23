@@ -293,7 +293,7 @@ export default function IntentPanel() {
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={onKeyDown}
                 placeholder='Try: "Long BTC 5x, $1000"'
-                className="flex-1 bg-[#161618] border border-[#28282e] rounded px-3 py-2 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-purple-500/50"
+                className="flex-1 bg-[#1c1c20] border border-[#28282e] rounded px-3 py-2 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-purple-500/50"
                 disabled={status === "executing"}
               />
               <button
@@ -341,7 +341,7 @@ export default function IntentPanel() {
 
           {/* Preview */}
           {status === "preview" && preview && (
-            <div className="mx-3 mb-3 p-3 rounded bg-[#161618] border border-[#28282e]">
+            <div className="mx-3 mb-3 p-3 rounded bg-[#1c1c20] border border-[#28282e]">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-[10px] font-bold text-gray-300 uppercase tracking-wider">Order Preview</span>
                 <button

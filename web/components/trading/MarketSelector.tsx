@@ -76,7 +76,7 @@ export default function MarketSelector({ selectedMarket, onSelectMarket, isOpen,
           placeholder="Search markets..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="w-full bg-[#161618] border border-[#28282e] rounded px-3 py-1.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-[#0052FF]"
+          className="w-full bg-[#1c1c20] border border-[#28282e] rounded px-3 py-1.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-[#0052FF]"
           autoFocus
         />
       </div>

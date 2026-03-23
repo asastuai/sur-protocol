@@ -11,7 +11,7 @@ export default function VaultPanel() {
   const [tab, setTab] = useState<"browse" | "my">("browse");
 
   return (
-    <div className="h-full flex flex-col bg-[#161618]">
+    <div className="h-full flex flex-col bg-[#1c1c20]">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-[#28282e]">
         <h2 className="text-sm font-semibold text-white tracking-wider">VAULTS</h2>

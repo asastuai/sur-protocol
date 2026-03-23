@@ -7,7 +7,7 @@
 /* ====== DARK THEME (default) ====== */
 :root,
 [data-theme="dark"] {
-  --sur-bg: #161618;
+  --sur-bg: #1c1c20;
   --sur-surface: #1c1c20;
   --sur-border: #28282e;
   --sur-text: #e4e5eb;

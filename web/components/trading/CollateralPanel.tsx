@@ -23,7 +23,7 @@ export default function CollateralPanel() {
         </span>
       </div>
 
-      <div className="p-3 bg-[#161618] rounded border border-[#28282e]">
+      <div className="p-3 bg-[#1c1c20] rounded border border-[#28282e]">
         <p className="text-[11px] text-gray-400 mb-3">
           Deposit yield-bearing tokens as margin collateral. Your tokens continue earning yield while locked as trading margin.
         </p>

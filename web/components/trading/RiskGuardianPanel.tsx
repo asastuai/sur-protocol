@@ -276,15 +276,15 @@ export default function RiskGuardianPanel() {
             <div className="p-3 space-y-3">
               {/* Stats */}
               <div className="grid grid-cols-3 gap-2">
-                <div className="bg-[#161618] rounded p-2 text-center">
+                <div className="bg-[#1c1c20] rounded p-2 text-center">
                   <div className="text-[10px] text-gray-500">Alerts</div>
                   <div className="text-sm font-bold text-sur-yellow">{guardianStatus.stats?.totalAlerts || 0}</div>
                 </div>
-                <div className="bg-[#161618] rounded p-2 text-center">
+                <div className="bg-[#1c1c20] rounded p-2 text-center">
                   <div className="text-[10px] text-gray-500">Interventions</div>
                   <div className="text-sm font-bold text-sur-green">{guardianStatus.stats?.totalInterventions || 0}</div>
                 </div>
-                <div className="bg-[#161618] rounded p-2 text-center">
+                <div className="bg-[#1c1c20] rounded p-2 text-center">
                   <div className="text-[10px] text-gray-500">Fees Paid</div>
                   <div className="text-sm font-bold text-gray-300">${(guardianStatus.stats?.totalFeesCharged || 0).toFixed(2)}</div>
                 </div>
@@ -292,7 +292,7 @@ export default function RiskGuardianPanel() {
 
               {/* Last action */}
               {guardianStatus.stats?.lastAction && (
-                <div className="bg-[#161618] rounded p-2">
+                <div className="bg-[#1c1c20] rounded p-2">
                   <div className="text-[9px] text-gray-500 mb-1">Last Action</div>
                   <p className="text-[10px] text-gray-300">{guardianStatus.stats.lastAction.detail}</p>
                   <p className="text-[8px] text-gray-600 mt-1">
@@ -386,7 +386,7 @@ export default function RiskGuardianPanel() {
               ) : (
                 <div className="space-y-2 max-h-48 overflow-y-auto">
                   {actions.slice().reverse().map(a => (
-                    <div key={a.id} className="bg-[#161618] rounded p-2">
+                    <div key={a.id} className="bg-[#1c1c20] rounded p-2">
                       <div className="flex items-center gap-2 mb-1">
                         <span className={`w-4 h-4 rounded text-[8px] font-bold flex items-center justify-center ${
                           a.action === "alert" ? "bg-sur-yellow/20 text-sur-yellow" :
