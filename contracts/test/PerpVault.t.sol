@@ -607,9 +607,11 @@ contract PerpVaultTest is Test {
         vm.prank(operator);
         vault.creditCollateral(alice, creditAmount);
 
-        assertEq(vault.balances(alice), creditAmount);
+        // C-5 fix: collateral goes to collateralBalances, not balances
+        assertEq(vault.collateralBalances(alice), creditAmount);
+        assertEq(vault.balances(alice), 0); // deposit balance unchanged
+        assertEq(vault.balanceOf(alice), creditAmount); // combined balance
         assertEq(vault.totalCollateralCredits(), creditAmount);
-        // totalDeposits should NOT increase (no real USDC moved)
         assertEq(vault.totalDeposits(), 0);
     }
 
@@ -634,7 +636,9 @@ contract PerpVaultTest is Test {
         vm.prank(operator);
         vault.debitCollateral(alice, 3_000 * USDC_UNIT);
 
-        assertEq(vault.balances(alice), 7_000 * USDC_UNIT);
+        // C-5 fix: collateral in separate mapping
+        assertEq(vault.collateralBalances(alice), 7_000 * USDC_UNIT);
+        assertEq(vault.balanceOf(alice), 7_000 * USDC_UNIT);
         assertEq(vault.totalCollateralCredits(), 7_000 * USDC_UNIT);
     }
 
@@ -669,12 +673,16 @@ contract PerpVaultTest is Test {
         vm.prank(operator);
         vault.creditCollateral(alice, 10_000 * USDC_UNIT);
 
-        // Alice's balance should be usable for internalTransfer (trading)
+        // Alice's collateral balance should be usable for internalTransfer (trading)
         vm.prank(operator);
         vault.internalTransfer(alice, bob, 5_000 * USDC_UNIT);
 
-        assertEq(vault.balances(alice), 5_000 * USDC_UNIT);
-        assertEq(vault.balances(bob), 5_000 * USDC_UNIT);
+        // Fix: alice's collateral reduced, bob gets collateral (not deposit)
+        // Collateral stays as collateral to prevent withdrawable USDC inflation
+        assertEq(vault.collateralBalances(alice), 5_000 * USDC_UNIT);
+        assertEq(vault.balances(alice), 0); // no deposit balance
+        assertEq(vault.collateralBalances(bob), 5_000 * USDC_UNIT); // received as collateral
+        assertEq(vault.balances(bob), 0); // NOT deposit balance
     }
 
     function test_mixedDepositsAndCredits() public {
@@ -686,8 +694,10 @@ contract PerpVaultTest is Test {
         vm.prank(operator);
         vault.creditCollateral(alice, 15_000 * USDC_UNIT);
 
-        // Alice has $35,000 total balance
-        assertEq(vault.balances(alice), 35_000 * USDC_UNIT);
+        // C-5 fix: separate mappings
+        assertEq(vault.balances(alice), 20_000 * USDC_UNIT); // deposit only
+        assertEq(vault.collateralBalances(alice), 15_000 * USDC_UNIT); // collateral only
+        assertEq(vault.balanceOf(alice), 35_000 * USDC_UNIT); // combined
         assertEq(vault.totalDeposits(), 20_000 * USDC_UNIT);
         assertEq(vault.totalCollateralCredits(), 15_000 * USDC_UNIT);
     }

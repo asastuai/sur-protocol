@@ -30,6 +30,7 @@ import { registerBotRoutes, handleBotRoute } from "./routes/bot.js";
 import { registerCopytradeRoutes, handleCopytradeRoute } from "./routes/copytrade.js";
 import { registerBacktesterRoutes, handleBacktesterRoute } from "./routes/backtester.js";
 import { registerPricesRoutes, handlePricesRoute } from "./routes/prices.js";
+import { registerPointsRoutes, handlePointsRoute } from "./points/routes.js";
 import { initSupabase } from "./db/supabase.js";
 
 const startedAt = Date.now();
@@ -44,9 +45,10 @@ async function main() {
   // Load configuration
   const config = loadConfig();
   console.log(`[Config] Network: ${config.chain.name}`);
-  console.log(`[Config] RPC: ${config.rpcUrl}`);
+  console.log(`[Config] RPC: ${config.rpcUrl}${config.rpcUrls.length > 1 ? ` (+${config.rpcUrls.length - 1} fallback)` : ""}`);
   console.log(`[Config] Markets: ${config.markets.map((m) => m.name).join(", ")}`);
   console.log(`[Config] Batch interval: ${config.batchIntervalMs}ms`);
+  console.log(`[Config] Max WS connections: ${process.env.MAX_WS_CONNECTIONS || 200}`);
   console.log();
 
   // Initialize Supabase (optional — runs without it)
@@ -79,9 +81,18 @@ async function main() {
   // ---- HTTP Server (health check for Railway) ----
   const port = parseInt(process.env.PORT || String(config.wsPort));
 
+  // CORS: whitelist allowed origins (default: localhost for dev)
+  const allowedOrigins = (process.env.CORS_ORIGINS || "http://localhost:3000,http://localhost:3001")
+    .split(",")
+    .map((o) => o.trim());
+
   const httpServer = createServer((req: IncomingMessage, res: ServerResponse) => {
-    // CORS headers for browser access
-    res.setHeader("Access-Control-Allow-Origin", "*");
+    // CORS headers — only allow whitelisted origins
+    const origin = req.headers.origin;
+    if (origin && allowedOrigins.includes(origin)) {
+      res.setHeader("Access-Control-Allow-Origin", origin);
+      res.setHeader("Vary", "Origin");
+    }
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
@@ -104,6 +115,11 @@ async function main() {
     // Price data routes (async — fetches from Binance)
     if (req.url?.startsWith("/api/prices/")) {
       if (handlePricesRoute(req, res)) return;
+    }
+
+    // Points & rewards routes
+    if (req.url?.startsWith("/api/points/")) {
+      if (handlePointsRoute(req, res)) return;
     }
 
     // Backtester routes (async — reads POST body)
@@ -143,6 +159,49 @@ async function main() {
       return;
     }
 
+    // Prometheus-compatible metrics endpoint
+    if (req.url === "/metrics") {
+      const wsStats = wsServer.getStats();
+      const pipelineStats = pipeline.getStats();
+      const uptimeSec = Math.floor((Date.now() - startedAt) / 1000);
+
+      const lines = [
+        "# HELP sur_api_uptime_seconds API uptime in seconds",
+        "# TYPE sur_api_uptime_seconds gauge",
+        `sur_api_uptime_seconds ${uptimeSec}`,
+        "",
+        "# HELP sur_api_ws_connections Current WebSocket connections",
+        "# TYPE sur_api_ws_connections gauge",
+        `sur_api_ws_connections ${wsStats.connectedClients}`,
+        "",
+        "# HELP sur_api_settlement_pending Pending trades awaiting settlement",
+        "# TYPE sur_api_settlement_pending gauge",
+        `sur_api_settlement_pending ${pipelineStats.pendingTrades}`,
+        "",
+        "# HELP sur_api_settlement_batches_total Total settlement batches submitted",
+        "# TYPE sur_api_settlement_batches_total counter",
+        `sur_api_settlement_batches_total ${pipelineStats.totalBatches}`,
+        "",
+        "# HELP sur_api_settlement_confirmed_total Confirmed settlement batches",
+        "# TYPE sur_api_settlement_confirmed_total counter",
+        `sur_api_settlement_confirmed_total ${pipelineStats.confirmed}`,
+        "",
+        "# HELP sur_api_settlement_failed_total Failed settlement batches",
+        "# TYPE sur_api_settlement_failed_total counter",
+        `sur_api_settlement_failed_total ${pipelineStats.failed}`,
+        "",
+        ...wsStats.markets.map((m) => [
+          `sur_api_market_orders{market="${m.id.slice(0, 10)}"} ${m.orders}`,
+          `sur_api_market_trades{market="${m.id.slice(0, 10)}"} ${m.trades}`,
+        ]).flat(),
+        "",
+      ];
+
+      res.writeHead(200, { "Content-Type": "text/plain; version=0.0.4" });
+      res.end(lines.join("\n"));
+      return;
+    }
+
     res.writeHead(404, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ error: "Not found" }));
   });
@@ -158,6 +217,9 @@ async function main() {
 
   // Register prices routes
   registerPricesRoutes(httpServer);
+
+  // Register points routes
+  registerPointsRoutes(httpServer);
 
   // Attach WebSocket to the HTTP server (shared port for Railway)
   wsServer.attachToServer(httpServer);

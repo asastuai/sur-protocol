@@ -12,6 +12,7 @@ import "./mocks/MockChainlink.sol";
 
 /// @title Oracle Circuit Breaker Tests
 /// @notice Tests for P1: Oracle variance circuit breaker that pauses on extreme price moves
+/// @dev H-6 fix: CB now returns early (doesn't push bad price). CB state IS persisted.
 
 contract OracleCircuitBreakerTest is Test {
     PerpVault public vault;
@@ -37,7 +38,7 @@ contract OracleCircuitBreakerTest is Test {
         usdc = new MockUSDC();
         vault = new PerpVault(address(usdc), owner, 0);
         insurance = new InsuranceFund(address(vault), owner);
-        engine = new PerpEngine(address(vault), owner, feeRecipient, address(insurance));
+        engine = new PerpEngine(address(vault), owner, feeRecipient, address(insurance), feeRecipient);
         mockPyth = new MockPyth();
         mockChainlinkBTC = new MockChainlinkAggregator(8, "BTC/USD");
         oracle = new OracleRouter(address(mockPyth), address(engine), owner);
@@ -99,6 +100,7 @@ contract OracleCircuitBreakerTest is Test {
         vm.prank(owner);
         oracle.pushPrice(btcMarket);
 
+        // H-6 fix: CB state IS set (return, not revert)
         assertTrue(oracle.oracleCircuitBreakerActive(), "CB should be active after 12% move");
         assertFalse(oracle.isOracleHealthy(), "Oracle should report unhealthy");
     }
@@ -124,15 +126,19 @@ contract OracleCircuitBreakerTest is Test {
         assertTrue(oracle.oracleCircuitBreakerActive());
     }
 
-    function test_oracleCB_stillPushesPrice() public {
-        // Even when CB triggers, the price should still be pushed
+    function test_oracleCB_doesNotPushBadPrice() public {
+        // H-6 fix: bad price should NOT be pushed to PerpEngine
         _setOraclePrice(56_000);
 
         vm.prank(owner);
         oracle.pushPrice(btcMarket);
 
+        // CB was triggered
+        assertTrue(oracle.oracleCircuitBreakerActive());
+
+        // But lastPrice in oracle should NOT be updated (return early before tracking)
         (uint256 lastP,) = oracle.getLastPrice(btcMarket);
-        assertEq(lastP, 56_000 * USDC_UNIT, "Price should still be pushed despite CB");
+        assertEq(lastP, 50_000 * USDC_UNIT, "Last price should remain at 50k (bad price not pushed)");
     }
 
     // ============================================================
@@ -150,8 +156,22 @@ contract OracleCircuitBreakerTest is Test {
         // Warp past cooldown (180s)
         vm.warp(block.timestamp + 181);
 
-        // isOracleHealthy should return true now (auto-reset via view)
-        assertTrue(oracle.isOracleHealthy(), "Should be healthy after cooldown");
+        // M-17 fix: Need consecutive good prices for stability verification
+        // Push 3 good prices (within 10% of last good price = 50000)
+        _setOraclePrice(50_500);
+        vm.prank(owner);
+        oracle.pushPrice(btcMarket);
+
+        _setOraclePrice(50_800);
+        vm.prank(owner);
+        oracle.pushPrice(btcMarket);
+
+        _setOraclePrice(51_000);
+        vm.prank(owner);
+        oracle.pushPrice(btcMarket);
+
+        // isOracleHealthy should return true now (cooldown + 3 good prices)
+        assertTrue(oracle.isOracleHealthy(), "Should be healthy after cooldown + good prices");
     }
 
     function test_oracleCB_notResetBeforeCooldown() public {
@@ -241,22 +261,28 @@ contract OracleCircuitBreakerTest is Test {
     }
 
     function test_oracleCB_consecutiveMovesCanRetrigger() public {
-        // First big move triggers CB
+        // First big move triggers CB (but doesn't push bad price)
         _setOraclePrice(56_000);
         vm.prank(owner);
         oracle.pushPrice(btcMarket);
         assertTrue(oracle.oracleCircuitBreakerActive());
 
-        // Wait for cooldown
+        // Wait for cooldown + manually reset (skip stability verification for this test)
         vm.warp(block.timestamp + 181);
-        assertTrue(oracle.isOracleHealthy());
 
-        // Reset the active flag by owner (since the state bool is still true)
+        // Reset CB manually (owner can always reset)
         vm.prank(owner);
         oracle.resetOracleCircuitBreaker();
 
-        // Another big move
-        _setOraclePrice(63_000); // 56k -> 63k = +12.5%
+        // Now push a normal price first (since lastPrice is still 50k, 56k was rejected)
+        // We need a price within 10% of 50k
+        _setOraclePrice(54_000); // 50k -> 54k = 8%
+        vm.prank(owner);
+        oracle.pushPrice(btcMarket);
+        assertFalse(oracle.oracleCircuitBreakerActive());
+
+        // Now another big move from 54k
+        _setOraclePrice(61_000); // 54k -> 61k = +12.9%
         vm.prank(owner);
         oracle.pushPrice(btcMarket);
 

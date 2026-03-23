@@ -5,10 +5,12 @@
  *
  * ON-CHAIN:
  *   - Vault solvency (USDC balance vs accounted)
- *   - Contract pause status
+ *   - Contract pause status (all 4: Vault, Engine, Settlement, Liquidator)
  *   - Oracle price freshness
  *   - Insurance fund coverage
- *   - Open interest per market
+ *   - Open interest per market (via lightweight getOpenInterest)
+ *   - Circuit breaker state (PerpEngine + OracleRouter)
+ *   - Pending ownership transfers (2-step ownership)
  *
  * INFRASTRUCTURE:
  *   - API server health (WebSocket ping)
@@ -42,6 +44,7 @@ interface MonitorConfig {
   contracts: {
     vault: Hex; engine: Hex; settlement: Hex;
     liquidator: Hex; insuranceFund: Hex; oracleRouter: Hex;
+    timelock: Hex;
   };
   keeperAddresses: Hex[];
   wsApiUrl: string;
@@ -68,6 +71,7 @@ function loadConfig(): MonitorConfig {
       liquidator: (process.env.LIQUIDATOR_ADDRESS || "0x") as Hex,
       insuranceFund: (process.env.INSURANCE_FUND_ADDRESS || "0x") as Hex,
       oracleRouter: (process.env.ORACLE_ROUTER_ADDRESS || "0x") as Hex,
+      timelock: (process.env.TIMELOCK_ADDRESS || "0x") as Hex,
     },
     keeperAddresses: (process.env.KEEPER_ADDRESSES || "").split(",").filter(Boolean).map(a => a.trim() as Hex),
     wsApiUrl: process.env.WS_API_URL || "ws://localhost:3002",
@@ -188,11 +192,43 @@ const ENGINE_ABI = [
       { name: "lastFundingUpdate", type: "uint256" }, { name: "fundingIntervalSecs", type: "uint256" },
       { name: "openInterestLong", type: "uint256" }, { name: "openInterestShort", type: "uint256" },
     ] },
+  { type: "function", name: "getOpenInterest", stateMutability: "view",
+    inputs: [{ name: "marketId", type: "bytes32" }],
+    outputs: [{ name: "oiLong", type: "uint256" }, { name: "oiShort", type: "uint256" }] },
+  { type: "function", name: "circuitBreakerActive", stateMutability: "view", inputs: [], outputs: [{ type: "bool" }] },
+  { type: "function", name: "circuitBreakerTriggeredAt", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
+  { type: "function", name: "pendingOwner", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+  { type: "function", name: "owner", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
 ] as const;
 
 const ORACLE_ABI = [
   { type: "function", name: "isPriceFresh", stateMutability: "view",
     inputs: [{ name: "marketId", type: "bytes32" }], outputs: [{ type: "bool" }] },
+  { type: "function", name: "oracleCircuitBreakerActive", stateMutability: "view", inputs: [], outputs: [{ type: "bool" }] },
+  { type: "function", name: "oracleCircuitBreakerTriggeredAt", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
+  { type: "function", name: "isOracleHealthy", stateMutability: "view", inputs: [], outputs: [{ type: "bool" }] },
+  { type: "function", name: "pendingOwner", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+] as const;
+
+const SETTLEMENT_ABI = [
+  { type: "function", name: "paused", stateMutability: "view", inputs: [], outputs: [{ type: "bool" }] },
+  { type: "function", name: "pendingOwner", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+] as const;
+
+const LIQUIDATOR_ABI = [
+  { type: "function", name: "paused", stateMutability: "view", inputs: [], outputs: [{ type: "bool" }] },
+  { type: "function", name: "totalLiquidations", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
+  { type: "function", name: "pendingOwner", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+] as const;
+
+const TIMELOCK_ABI = [
+  { type: "function", name: "owner", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+  { type: "function", name: "delay", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
+  { type: "function", name: "guardian", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+] as const;
+
+const INSURANCE_ABI = [
+  { type: "function", name: "pendingOwner", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
 ] as const;
 
 async function checkOnChain(client: PublicClient, config: MonitorConfig, alerts: AlertDispatcher) {
@@ -220,24 +256,65 @@ async function checkOnChain(client: PublicClient, config: MonitorConfig, alerts:
     await alerts.dispatch({ severity: "WARN", component: "Vault", message: `Health check failed: ${e?.message?.slice(0, 80)}`, timestamp: Date.now() });
   }
 
-  // Engine pause
+  // Engine pause + circuit breaker
   try {
     const enginePaused = await client.readContract({ address: config.contracts.engine, abi: ENGINE_ABI, functionName: "paused", args: [] });
     if (enginePaused) {
       await alerts.dispatch({ severity: "ERROR", component: "Engine", message: "PerpEngine is PAUSED — no trades can execute", timestamp: Date.now() });
     }
+
+    const engineCB = await client.readContract({ address: config.contracts.engine, abi: ENGINE_ABI, functionName: "circuitBreakerActive", args: [] });
+    if (engineCB) {
+      const cbTriggeredAt = Number(await client.readContract({ address: config.contracts.engine, abi: ENGINE_ABI, functionName: "circuitBreakerTriggeredAt", args: [] }));
+      const cbAgeSecs = now - cbTriggeredAt;
+      await alerts.dispatch({ severity: "CRITICAL", component: "CircuitBreaker", message: `Engine circuit breaker ACTIVE for ${cbAgeSecs}s — liquidations halted`, value: `Triggered ${cbAgeSecs}s ago`, timestamp: Date.now() });
+    }
   } catch {}
 
-  // Markets and oracle freshness
+  // Settlement pause
+  try {
+    const settlementPaused = await client.readContract({ address: config.contracts.settlement, abi: SETTLEMENT_ABI, functionName: "paused", args: [] });
+    if (settlementPaused) {
+      await alerts.dispatch({ severity: "ERROR", component: "Settlement", message: "OrderSettlement is PAUSED — no trades settling", timestamp: Date.now() });
+    }
+  } catch {}
+
+  // Liquidator pause
+  try {
+    const liquidatorPaused = await client.readContract({ address: config.contracts.liquidator, abi: LIQUIDATOR_ABI, functionName: "paused", args: [] });
+    if (liquidatorPaused) {
+      await alerts.dispatch({ severity: "ERROR", component: "Liquidator", message: "Liquidator is PAUSED — no liquidations possible", timestamp: Date.now() });
+    }
+  } catch {}
+
+  // Oracle circuit breaker + health
+  try {
+    const oracleCB = await client.readContract({ address: config.contracts.oracleRouter, abi: ORACLE_ABI, functionName: "oracleCircuitBreakerActive", args: [] });
+    if (oracleCB) {
+      const cbTriggeredAt = Number(await client.readContract({ address: config.contracts.oracleRouter, abi: ORACLE_ABI, functionName: "oracleCircuitBreakerTriggeredAt", args: [] }));
+      const cbAgeSecs = now - cbTriggeredAt;
+      await alerts.dispatch({ severity: "CRITICAL", component: "CircuitBreaker", message: `Oracle circuit breaker ACTIVE for ${cbAgeSecs}s — price feeds frozen`, value: `Triggered ${cbAgeSecs}s ago`, timestamp: Date.now() });
+    }
+
+    const oracleHealthy = await client.readContract({ address: config.contracts.oracleRouter, abi: ORACLE_ABI, functionName: "isOracleHealthy", args: [] });
+    if (!oracleHealthy) {
+      await alerts.dispatch({ severity: "ERROR", component: "Oracle", message: "OracleRouter reports UNHEALTHY", timestamp: Date.now() });
+    }
+  } catch {}
+
+  // Markets: price freshness + OI (using lightweight getOpenInterest)
   for (const m of config.markets) {
     try {
       const data = await client.readContract({ address: config.contracts.engine, abi: ENGINE_ABI, functionName: "markets", args: [m.id] });
-      const [,, active,,,,markRaw, indexRaw, lastPriceUpdate,,,,oiLRaw, oiSRaw] = data;
+      const [,, active,,,,markRaw, indexRaw, lastPriceUpdate,,,,, ] = data;
 
       const mark = Number(markRaw) / P;
       const index = Number(indexRaw) / P;
       const lastUpdate = Number(lastPriceUpdate);
       const staleSecs = now - lastUpdate;
+
+      // Use lightweight getter for OI instead of full markets() struct
+      const [oiLRaw, oiSRaw] = await client.readContract({ address: config.contracts.engine, abi: ENGINE_ABI, functionName: "getOpenInterest", args: [m.id] });
       const oiL = Number(oiLRaw) / S;
       const oiS = Number(oiSRaw) / S;
 
@@ -269,6 +346,23 @@ async function checkOnChain(client: PublicClient, config: MonitorConfig, alerts:
       const totalOi = mark * (oiL + oiS);
       if (totalOi > 0 && insBal / totalOi < 0.02) {
         await alerts.dispatch({ severity: "ERROR", component: "Insurance", message: `Coverage ratio ${((insBal / totalOi) * 100).toFixed(2)}%`, value: `Balance: $${insBal.toFixed(2)}, OI: $${totalOi.toFixed(2)}`, timestamp: Date.now() });
+      }
+    } catch {}
+  }
+
+  // Pending ownership transfers — detect in-progress 2-step transfers
+  const ownershipTargets: Array<{ name: string; address: Hex; abi: any }> = [
+    { name: "PerpEngine", address: config.contracts.engine, abi: ENGINE_ABI },
+    { name: "OrderSettlement", address: config.contracts.settlement, abi: SETTLEMENT_ABI },
+    { name: "Liquidator", address: config.contracts.liquidator, abi: LIQUIDATOR_ABI },
+    { name: "OracleRouter", address: config.contracts.oracleRouter, abi: ORACLE_ABI },
+    { name: "InsuranceFund", address: config.contracts.insuranceFund, abi: INSURANCE_ABI },
+  ];
+  for (const target of ownershipTargets) {
+    try {
+      const pending = await client.readContract({ address: target.address, abi: target.abi, functionName: "pendingOwner", args: [] });
+      if (pending && pending !== "0x0000000000000000000000000000000000000000") {
+        await alerts.dispatch({ severity: "WARN", component: "Ownership", message: `${target.name} has pendingOwner set — ownership transfer in progress`, value: `Pending: ${(pending as string).slice(0, 10)}...`, timestamp: Date.now() });
       }
     } catch {}
   }

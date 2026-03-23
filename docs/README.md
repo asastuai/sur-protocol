@@ -6,10 +6,18 @@ SUR Protocol is the first perpetual futures DEX built for Argentina and Latin Am
 
 ## Architecture
 
-- **Smart Contracts** (`contracts/`): Solidity contracts deployed on Base Sepolia
-  - `Settlement.sol` — Batch settlement of matched trades
-  - `Vault.sol` — USDC deposit/withdrawal for margin
-  - `Engine.sol` — On-chain position and margin tracking
+- **Smart Contracts** (`contracts/`): Solidity 0.8.28 on Base L2 (Cancun EVM)
+  - `PerpVault.sol` — USDC custody, deposits/withdrawals, operator-authorized transfers
+  - `PerpEngine.sol` — Positions, margin (isolated + cross), PnL, funding rates, circuit breaker
+  - `OrderSettlement.sol` — EIP-712 signed order settlement, nonce replay protection, MEV protection
+  - `Liquidator.sol` — Permissionless liquidation (single, batch, cross-margin)
+  - `InsuranceFund.sol` — Bad debt coverage, keeper rewards
+  - `OracleRouter.sol` — Pyth (primary) + Chainlink (fallback), oracle circuit breaker
+  - `SurTimelock.sol` — 48h governance delay, guardian emergency pause
+  - `CollateralManager.sol` — Multi-collateral (cbETH, wstETH, stUSDC) with haircuts
+  - `TradingVault.sol` — Pooled trading vaults with shares, fees, HWM
+  - `A2ADarkPool.sol` — Agent-to-agent OTC trading via intents
+  - `AutoDeleveraging.sol` — Last-resort ADL when insurance depleted
 - **API Server** (`api/`): Node.js WebSocket backend
   - In-memory matching engine with price-time priority
   - Real-time orderbook and trade streaming
@@ -22,13 +30,26 @@ SUR Protocol is the first perpetual futures DEX built for Argentina and Latin Am
 - **Risk Engine** (`risk-engine/`): Liquidation monitoring
 - **SDK** (`sdk/`): TypeScript SDK for programmatic access
 
-## Contracts (Base Sepolia)
+## Contracts
 
-| Contract   | Address                                      |
-|------------|----------------------------------------------|
-| Settlement | `0x7297429477254843cB00A6e17C5B1f83B3AE2Eec` |
-| Engine     | `0xB45E23Ace809C31bE5C6b44D052E742aF4be94e6` |
-| Vault      | `0x9C54911f0f5D2D6963978ec903c118Aa09C1dC81` |
+> **Note:** Contract addresses will be populated after deployment. See [MAINNET_LAUNCH_CHECKLIST.md](MAINNET_LAUNCH_CHECKLIST.md) for deployment procedure.
+
+| Contract | Status |
+|----------|--------|
+| PerpVault | Ready for deploy |
+| PerpEngine | Ready for deploy |
+| OrderSettlement | Ready for deploy |
+| Liquidator | Ready for deploy |
+| InsuranceFund | Ready for deploy |
+| OracleRouter | Ready for deploy |
+| SurTimelock | Ready for deploy |
+| CollateralManager | Ready for deploy |
+| TradingVault | Ready for deploy |
+| A2ADarkPool | Ready for deploy |
+| AutoDeleveraging | Ready for deploy |
+
+**Tests:** 302 passing (including adversarial chaos tests and 100 DAU load test)
+**Internal Audit:** 69 findings, all addressed. See [HARDENING_COMPLETE.md](HARDENING_COMPLETE.md)
 
 ## Markets
 

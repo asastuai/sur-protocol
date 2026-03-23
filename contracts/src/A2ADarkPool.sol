@@ -63,6 +63,14 @@ contract A2ADarkPool {
     event ResponseCancelled(uint256 indexed responseId);
     event A2ATradeSettled(uint256 indexed intentId, uint256 indexed responseId, address buyer, address seller, bytes32 marketId, uint256 size, uint256 price, uint256 timestamp);
     event ReputationUpdated(address indexed agent, uint256 newScore, uint256 completedTrades);
+    event OwnershipTransferred(address indexed oldOwner, address indexed newOwner);
+    event OwnershipTransferStarted(address indexed currentOwner, address indexed pendingOwner);
+    event OperatorUpdated(address indexed operator, bool status);
+    event FeeBpsUpdated(uint256 newFeeBps);
+    event FeeRecipientUpdated(address indexed newRecipient);
+    event LargeTradeThresholdUpdated(uint256 newThreshold);
+    event LargeTradeMinReputationUpdated(uint256 newMinReputation);
+    event PauseStatusChanged(bool isPaused);
 
     // ============================================================
     //                    STRUCTS
@@ -109,6 +117,7 @@ contract A2ADarkPool {
     // ============================================================
 
     address public owner;
+    address public pendingOwner;
     bool public paused;
     IPerpVault public vault;
     IPerpEngine public engine;
@@ -154,6 +163,16 @@ contract A2ADarkPool {
     modifier onlyOperator() { if (!operators[msg.sender]) revert NotOperator(); _; }
     modifier whenNotPaused() { if (paused) revert Paused(); _; }
 
+    /// @notice H-10 fix: Reentrancy guard (G-19: transient storage for gas efficiency)
+    modifier nonReentrant() {
+        assembly {
+            if tload(0) { revert(0, 0) }
+            tstore(0, 1)
+        }
+        _;
+        assembly { tstore(0, 0) }
+    }
+
     // ============================================================
     //                    CONSTRUCTOR
     // ============================================================
@@ -164,7 +183,7 @@ contract A2ADarkPool {
         address _feeRecipient,
         address _owner
     ) {
-        if (_vault == address(0) || _engine == address(0) || _owner == address(0)) revert ZeroAddress();
+        if (_vault == address(0) || _engine == address(0) || _feeRecipient == address(0) || _owner == address(0)) revert ZeroAddress();
         vault = IPerpVault(_vault);
         engine = IPerpEngine(_engine);
         feeRecipient = _feeRecipient;
@@ -284,6 +303,19 @@ contract A2ADarkPool {
         emit ResponsePosted(responseId, intentId, msg.sender, price);
     }
 
+    /// @notice Cancel a pending response
+    function cancelResponse(uint256 responseId) external {
+        Response storage resp = responses[responseId];
+        if (resp.id == 0) revert ResponseNotFound(responseId);
+        if (resp.agent != msg.sender) revert NotResponseCreator(responseId);
+        require(resp.status == ResponseStatus.Pending, "Response not pending");
+
+        resp.status = ResponseStatus.Cancelled;
+        reputations[msg.sender].cancelledResponses++;
+
+        emit ResponseCancelled(responseId);
+    }
+
     // ============================================================
     //                    ACCEPT + SETTLE
     // ============================================================
@@ -291,8 +323,9 @@ contract A2ADarkPool {
     /// @notice Intent creator accepts a response → atomic settlement
     /// @dev Opens positions for BOTH agents via PerpEngine in a single tx.
     ///      If either side can't fulfill (insufficient margin), entire tx reverts.
+    /// @dev H-10 fix: nonReentrant guard. H-11 fix: fees collected AFTER positions opened.
     function acceptAndSettle(uint256 intentId, uint256 responseId)
-        external whenNotPaused
+        external whenNotPaused nonReentrant
     {
         Intent storage intent = intents[intentId];
         if (intent.id == 0) revert IntentNotFound(intentId);
@@ -311,25 +344,22 @@ contract A2ADarkPool {
         uint256 price = resp.price;
         uint256 size = intent.size;
 
-        // Collect fees from both sides
+        // Update statuses BEFORE external calls (CEI pattern)
+        intent.status = IntentStatus.Filled;
+        intent.filledResponseId = responseId;
+        resp.status = ResponseStatus.Accepted;
+
+        // Open positions atomically via PerpEngine
+        engine.openPosition(intent.marketId, buyer, int256(size), price);
+        engine.openPosition(intent.marketId, seller, -int256(size), price);
+
+        // H-11 fix: Collect fees AFTER position opening confirmed
         uint256 notional = (price * size) / SIZE_PRECISION;
         uint256 feePerSide = (notional * feeBps) / BPS;
-
         if (feePerSide > 0) {
             vault.internalTransfer(buyer, feeRecipient, feePerSide);
             vault.internalTransfer(seller, feeRecipient, feePerSide);
         }
-
-        // Open positions atomically via PerpEngine
-        // Buyer gets a long position
-        engine.openPosition(intent.marketId, buyer, int256(size), price);
-        // Seller gets a short position
-        engine.openPosition(intent.marketId, seller, -int256(size), price);
-
-        // Update statuses
-        intent.status = IntentStatus.Filled;
-        intent.filledResponseId = responseId;
-        resp.status = ResponseStatus.Accepted;
 
         // Update reputation for both agents
         _updateReputation(intent.agent, notional, true);
@@ -425,11 +455,55 @@ contract A2ADarkPool {
     //                    ADMIN
     // ============================================================
 
-    function setOperator(address op, bool status) external onlyOwner { operators[op] = status; }
-    function setFeeBps(uint256 newFee) external onlyOwner { require(newFee <= 50, "Max 0.5%"); feeBps = newFee; }
-    function setFeeRecipient(address newRecip) external onlyOwner { feeRecipient = newRecip; }
-    function setLargeTradeThreshold(uint256 threshold) external onlyOwner { largeTradeThreshold = threshold; }
-    function setLargeTradeMinReputation(uint256 minRep) external onlyOwner { largeTradeMinReputation = minRep; }
-    function pause() external onlyOwner { paused = true; }
-    function unpause() external onlyOwner { paused = false; }
+    function transferOwnership(address newOwner) external onlyOwner {
+        if (newOwner == address(0)) revert ZeroAddress();
+        pendingOwner = newOwner;
+        emit OwnershipTransferStarted(owner, newOwner);
+    }
+
+    function acceptOwnership() external {
+        if (msg.sender != pendingOwner) revert NotOwner();
+        address old = owner;
+        owner = msg.sender;
+        pendingOwner = address(0);
+        emit OwnershipTransferred(old, msg.sender);
+    }
+
+    function setOperator(address op, bool status) external onlyOwner {
+        if (op == address(0)) revert ZeroAddress();
+        operators[op] = status;
+        emit OperatorUpdated(op, status);
+    }
+
+    function setFeeBps(uint256 newFee) external onlyOwner {
+        require(newFee <= 50, "Max 0.5%");
+        feeBps = newFee;
+        emit FeeBpsUpdated(newFee);
+    }
+
+    function setFeeRecipient(address newRecip) external onlyOwner {
+        if (newRecip == address(0)) revert ZeroAddress();
+        feeRecipient = newRecip;
+        emit FeeRecipientUpdated(newRecip);
+    }
+
+    function setLargeTradeThreshold(uint256 threshold) external onlyOwner {
+        largeTradeThreshold = threshold;
+        emit LargeTradeThresholdUpdated(threshold);
+    }
+
+    function setLargeTradeMinReputation(uint256 minRep) external onlyOwner {
+        largeTradeMinReputation = minRep;
+        emit LargeTradeMinReputationUpdated(minRep);
+    }
+
+    function pause() external onlyOwner {
+        paused = true;
+        emit PauseStatusChanged(true);
+    }
+
+    function unpause() external onlyOwner {
+        paused = false;
+        emit PauseStatusChanged(false);
+    }
 }

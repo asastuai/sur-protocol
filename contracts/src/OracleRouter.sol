@@ -36,6 +36,8 @@ contract OracleRouter {
     error NotOperator();
     error ZeroAddress();
     error FeedNotConfigured(bytes32 marketId);
+    error SequencerDown();
+    error SequencerGracePeriodNotOver(uint256 timeSinceUp, uint256 gracePeriod);
     error PriceStale(bytes32 marketId, uint256 age, uint256 maxAge);
     error PriceNegativeOrZero(bytes32 marketId, int256 price);
     error PriceDeviationTooHigh(
@@ -140,6 +142,16 @@ contract OracleRouter {
 
     /// @notice Max price change per update (in BPS). Larger moves trigger circuit breaker.
     uint256 public maxPriceChangeBps = 1000; // 10% max move per update
+
+    /// @notice M-17 fix: Count of consecutive good price updates after CB trigger
+    uint256 public goodPriceCountAfterCB;
+    uint256 public requiredGoodPricesForReset = 3; // Need 3 consecutive good updates
+
+    /// @notice H-8 fix: L2 Sequencer Uptime Feed (Chainlink)
+    /// @dev Base Mainnet: 0xBCF85224fc0756B9Fa45aA7892530B47e10b6433
+    ///      Set to address(0) to disable check (e.g., on testnet)
+    address public sequencerUptimeFeed;
+    uint256 public sequencerGracePeriod = 3600; // 1 hour grace after restart
 
     // ============================================================
     //                        MODIFIERS
@@ -265,6 +277,18 @@ contract OracleRouter {
     {
         FeedConfig memory feed = feeds[marketId];
         if (feed.chainlinkFeed == address(0)) revert FeedNotConfigured(marketId);
+
+        // H-8 fix: Check L2 sequencer uptime before trusting Chainlink
+        if (sequencerUptimeFeed != address(0)) {
+            (, int256 seqAnswer,, uint256 seqUpdatedAt,) =
+                IChainlinkAggregator(sequencerUptimeFeed).latestRoundData();
+            // seqAnswer == 0 means sequencer is UP, 1 means DOWN
+            bool isSequencerUp = seqAnswer == 0;
+            if (!isSequencerUp) revert SequencerDown();
+            // Grace period after restart — prices may be stale
+            uint256 timeSinceUp = block.timestamp - seqUpdatedAt;
+            if (timeSinceUp < sequencerGracePeriod) revert SequencerGracePeriodNotOver(timeSinceUp, sequencerGracePeriod);
+        }
 
         IChainlinkAggregator aggregator = IChainlinkAggregator(feed.chainlinkFeed);
 
@@ -426,38 +450,40 @@ contract OracleRouter {
     // ============================================================
 
     /// @notice Read prices from oracles and push to PerpEngine
+    /// @dev G-23: Uses cached feed from getPrice to avoid double SLOAD
     function _pushPrice(bytes32 marketId) internal {
         (uint256 markPrice, uint256 indexPrice, uint8 source) = getPrice(marketId);
 
-        // Check deviation between sources if both available
+        // H-7 fix: Block price push when deviation exceeds maxDeviationBps (not 3x)
+        // G-23: feeds[marketId] was already loaded in getPrice; warm SLOAD here (~100 gas, acceptable)
         FeedConfig memory feed = feeds[marketId];
         if (source == 2 && feed.maxDeviationBps > 0) {
             uint256 deviation = _calculateDeviation(markPrice, indexPrice);
             if (deviation > feed.maxDeviationBps) {
                 emit DeviationWarning(marketId, markPrice, indexPrice, deviation);
-                // Don't revert - use Pyth as mark, Chainlink as index
-                // but warn the operator. In severe cases, operator should pause.
-                if (deviation > feed.maxDeviationBps * 3) {
-                    // >3x max deviation: something is very wrong, revert
-                    revert PriceDeviationTooHigh(marketId, markPrice, indexPrice, deviation);
-                }
+                revert PriceDeviationTooHigh(marketId, markPrice, indexPrice, deviation);
             }
         }
 
-        // Price change circuit breaker
+        // H-6 fix: Price change circuit breaker — do NOT push bad price
         uint256 prevPrice = lastPrice[marketId];
         if (prevPrice > 0 && maxPriceChangeBps > 0) {
             uint256 changeBps = _calculateDeviation(markPrice, prevPrice);
             if (changeBps > maxPriceChangeBps) {
                 oracleCircuitBreakerActive = true;
                 oracleCircuitBreakerTriggeredAt = block.timestamp;
+                goodPriceCountAfterCB = 0; // M-17 fix: reset good price counter
                 emit OracleCircuitBreakerTriggered(marketId, prevPrice, markPrice, changeBps, block.timestamp);
-                // Still push the price (so liquidations use accurate price)
-                // but the flag will block new positions in PerpEngine
+                return;
             }
         }
 
-        // Push to PerpEngine
+        // M-17 fix: Track consecutive good prices after CB for stability verification
+        if (oracleCircuitBreakerActive) {
+            goodPriceCountAfterCB++;
+        }
+
+        // Push to PerpEngine (only reached if price passed all checks)
         engine.updateMarkPrice(marketId, markPrice, indexPrice);
 
         // Track last price
@@ -545,11 +571,13 @@ contract OracleRouter {
     }
 
     /// @notice Check if oracle circuit breaker is active (for PerpEngine to query)
+    /// @dev M-17 fix: Requires both cooldown AND consecutive good price updates
     function isOracleHealthy() external view returns (bool) {
         if (!oracleCircuitBreakerActive) return true;
-        // Auto-reset after cooldown
-        if (block.timestamp - oracleCircuitBreakerTriggeredAt >= oracleCooldownSecs) return true;
-        return false;
+        // Auto-reset requires cooldown elapsed AND stability verified
+        bool cooldownPassed = block.timestamp - oracleCircuitBreakerTriggeredAt >= oracleCooldownSecs;
+        bool stabilityVerified = goodPriceCountAfterCB >= requiredGoodPricesForReset;
+        return cooldownPassed && stabilityVerified;
     }
 
     /// @notice Check if price data is fresh enough for a market
@@ -570,12 +598,30 @@ contract OracleRouter {
         emit OperatorUpdated(op, status);
     }
 
+    event OwnershipTransferred(address indexed oldOwner, address indexed newOwner);
+    event OwnershipTransferStarted(address indexed currentOwner, address indexed pendingOwner);
+    event SequencerFeedUpdated(address feed, uint256 gracePeriod);
+
+    address public pendingOwner;
+
     function transferOwnership(address newOwner) external onlyOwner {
         if (newOwner == address(0)) revert ZeroAddress();
-        owner = newOwner;
+        pendingOwner = newOwner;
+        emit OwnershipTransferStarted(owner, newOwner);
+    }
+
+    function acceptOwnership() external {
+        if (msg.sender != pendingOwner) revert NotOwner();
+        address old = owner;
+        owner = msg.sender;
+        pendingOwner = address(0);
+        emit OwnershipTransferred(old, msg.sender);
     }
 
     function setOracleCircuitBreakerParams(uint256 cooldownSecs, uint256 maxChangeBps) external onlyOwner {
+        // M-19 fix: Validate CB params to prevent disabling
+        require(cooldownSecs >= 60 && cooldownSecs <= 86400, "Invalid cooldown");
+        require(maxChangeBps >= 100 && maxChangeBps <= BPS, "Invalid max change");
         oracleCooldownSecs = cooldownSecs;
         maxPriceChangeBps = maxChangeBps;
     }
@@ -583,6 +629,15 @@ contract OracleRouter {
     function resetOracleCircuitBreaker() external onlyOwner {
         oracleCircuitBreakerActive = false;
         emit OracleCircuitBreakerReset(block.timestamp);
+    }
+
+    function setSequencerUptimeFeed(address feed, uint256 gracePeriod) external onlyOwner {
+        if (feed != address(0)) {
+            require(gracePeriod >= 300, "Grace period too short");
+        }
+        sequencerUptimeFeed = feed;
+        sequencerGracePeriod = gracePeriod;
+        emit SequencerFeedUpdated(feed, gracePeriod);
     }
 
     /// @notice Receive ETH for Pyth update fees

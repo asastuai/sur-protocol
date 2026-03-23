@@ -9,7 +9,7 @@ import Link from "next/link";
 
 function StatCard({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
-    <div className="bg-sur-surface border border-sur-border rounded-xl px-5 py-4">
+    <div className="glass-panel rounded-xl px-5 py-4">
       <div className="text-[11px] text-sur-muted font-medium uppercase tracking-wider mb-1">{label}</div>
       <div className="text-xl font-bold tabular-nums">{value}</div>
       {sub && <div className="text-[11px] text-sur-muted mt-0.5">{sub}</div>}

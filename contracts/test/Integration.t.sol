@@ -66,7 +66,7 @@ contract IntegrationTest is Test {
         vault = new PerpVault(address(usdc), owner, 10_000_000 * USDC_UNIT); // $10M cap
 
         insurance = new InsuranceFund(address(vault), owner);
-        engine = new PerpEngine(address(vault), owner, feeRecipient, address(insurance));
+        engine = new PerpEngine(address(vault), owner, feeRecipient, address(insurance), feeRecipient);
 
         settlement = new OrderSettlement(address(engine), address(vault), feeRecipient, owner);
         liquidator = new Liquidator(address(engine), address(insurance), owner);
@@ -101,7 +101,9 @@ contract IntegrationTest is Test {
 
         // Disable exposure limit and circuit breaker for integration tests (tested separately)
         engine.setMaxExposureBps(0);
-        engine.setCircuitBreakerParams(60, 10000, 0); // 100% threshold = never triggers
+        engine.setCircuitBreakerParams(60, 10000, 60); // 100% threshold = never triggers
+        engine.setOiSkewCap(10000); // disable skew cap for tests
+        settlement.setSettlementDelay(0, 300); // disable MEV delay for integration tests
 
         // --- Add BTC-USD market ---
         engine.addMarket(
@@ -260,9 +262,20 @@ contract IntegrationTest is Test {
         uint256 keeperBalBefore = vault.balances(keeper);
         uint256 insuranceBalBefore = vault.balances(address(insurance));
 
-        // Keeper liquidates Bob
-        vm.prank(keeper);
-        liquidator.liquidate(btcMarket, bob);
+        // Keeper liquidates Bob - partial liquidation (25% per call),
+        // so we loop until position is fully closed.
+        // With 25% reduction per round, convergence to the tiny-position
+        // threshold (SIZE_PRECISION/100 = 1e6) takes ~18 rounds from 1e8.
+        uint256 rounds;
+        while (true) {
+            (bobSize,,,,) = engine.positions(btcMarket, bob);
+            if (bobSize == 0) break;
+            if (!engine.isLiquidatable(btcMarket, bob)) break;
+            vm.prank(keeper);
+            liquidator.liquidate(btcMarket, bob);
+            rounds++;
+            require(rounds <= 25, "Too many liquidation rounds");
+        }
 
         // Bob's position should be gone
         (bobSize,,,,) = engine.positions(btcMarket, bob);
@@ -272,9 +285,9 @@ contract IntegrationTest is Test {
         uint256 keeperReward = vault.balances(keeper) - keeperBalBefore;
         assertGt(keeperReward, 0, "Keeper should have received reward");
 
-        // Liquidation stats
-        assertEq(liquidator.totalLiquidations(), 1);
-        assertEq(liquidator.keeperLiquidations(keeper), 1);
+        // Liquidation stats - partial liquidation (25% per round) requires multiple rounds
+        assertEq(liquidator.totalLiquidations(), rounds, "Liquidation rounds should match");
+        assertEq(liquidator.keeperLiquidations(keeper), rounds, "Keeper liquidation count should match");
 
         emit log_named_uint("  Keeper reward", keeperReward);
         emit log_string("--- Phase C: Bob liquidated successfully ---");

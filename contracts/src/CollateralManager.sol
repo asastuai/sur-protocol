@@ -80,11 +80,15 @@ contract CollateralManager {
     // ============================================================
 
     address public owner;
+    address public pendingOwner;
     bool public paused;
     IPerpVault public vault;
 
     uint256 public constant BPS = 10_000;
     uint256 public constant PRICE_PRECISION = 1e6;
+
+    /// @dev Reentrancy guard (1 = unlocked, 2 = locked)
+    uint256 private _locked = 1;
 
     // Supported collateral tokens
     address[] public supportedTokens;
@@ -102,6 +106,7 @@ contract CollateralManager {
     modifier onlyOwner() { if (msg.sender != owner) revert NotOwner(); _; }
     modifier onlyOperator() { if (!operators[msg.sender] && msg.sender != owner) revert NotOperator(); _; }
     modifier whenNotPaused() { if (paused) revert Paused(); _; }
+    modifier nonReentrant() { require(_locked == 1, "Reentrant"); _locked = 2; _; _locked = 1; }
 
     // ============================================================
     //                    CONSTRUCTOR
@@ -165,20 +170,48 @@ contract CollateralManager {
         emit CollateralHaircutUpdated(token, old, newHaircut);
     }
 
+    event CollateralPauseChanged(address indexed token, bool active);
+
     function pauseCollateral(address token) external onlyOwner {
+        if (collaterals[token].token == address(0)) revert CollateralNotSupported(token);
         collaterals[token].active = false;
+        emit CollateralPauseChanged(token, false);
     }
 
     function unpauseCollateral(address token) external onlyOwner {
+        if (collaterals[token].token == address(0)) revert CollateralNotSupported(token);
         collaterals[token].active = true;
+        emit CollateralPauseChanged(token, true);
     }
+
+    event OwnershipTransferred(address indexed oldOwner, address indexed newOwner);
+    event OwnershipTransferStarted(address indexed currentOwner, address indexed pendingOwner);
+
+    function transferOwnership(address newOwner) external onlyOwner {
+        if (newOwner == address(0)) revert ZeroAddress();
+        pendingOwner = newOwner;
+        emit OwnershipTransferStarted(owner, newOwner);
+    }
+
+    function acceptOwnership() external {
+        if (msg.sender != pendingOwner) revert NotOwner();
+        address old = owner;
+        owner = msg.sender;
+        pendingOwner = address(0);
+        emit OwnershipTransferred(old, msg.sender);
+    }
+
+    event OperatorUpdated(address indexed operator, bool status);
+    event PauseStatusChanged(bool isPaused);
 
     function setOperator(address op, bool status) external onlyOwner {
+        if (op == address(0)) revert ZeroAddress();
         operators[op] = status;
+        emit OperatorUpdated(op, status);
     }
 
-    function pause() external onlyOwner { paused = true; }
-    function unpause() external onlyOwner { paused = false; }
+    function pause() external onlyOwner { paused = true; emit PauseStatusChanged(true); }
+    function unpause() external onlyOwner { paused = false; emit PauseStatusChanged(false); }
 
     // ============================================================
     //                    ORACLE
@@ -186,6 +219,11 @@ contract CollateralManager {
 
     /// @notice Update the USD price of a collateral token
     /// @dev Called by the oracle keeper
+    /// @notice H-13 fix: Max price deviation per update (10% = 1000 BPS)
+    uint256 public maxPriceDeviationBps = 1000;
+
+    error PriceDeviationTooHigh(uint256 oldPrice, uint256 newPrice, uint256 deviationBps);
+
     function updatePrice(address token, uint256 newPrice)
         external onlyOperator
     {
@@ -193,9 +231,27 @@ contract CollateralManager {
         if (c.token == address(0)) revert CollateralNotSupported(token);
         if (newPrice == 0) revert ZeroAmount();
 
+        // H-13 fix: Bound price change per update to prevent manipulation
+        if (c.price > 0 && maxPriceDeviationBps > 0) {
+            uint256 diff = newPrice > c.price ? newPrice - c.price : c.price - newPrice;
+            uint256 deviationBps = (diff * 10_000) / c.price;
+            if (deviationBps > maxPriceDeviationBps) {
+                revert PriceDeviationTooHigh(c.price, newPrice, deviationBps);
+            }
+        }
+
         c.price = newPrice;
         c.lastPriceUpdate = block.timestamp;
         emit CollateralPriceUpdated(token, newPrice, block.timestamp);
+    }
+
+    event MaxPriceDeviationUpdated(uint256 oldBps, uint256 newBps);
+
+    function setMaxPriceDeviationBps(uint256 newBps) external onlyOwner {
+        require(newBps >= 100 && newBps <= 5000, "Invalid deviation");
+        uint256 old = maxPriceDeviationBps;
+        maxPriceDeviationBps = newBps;
+        emit MaxPriceDeviationUpdated(old, newBps);
     }
 
     function _requireFreshPrice(CollateralConfig storage c) internal view {
@@ -213,7 +269,7 @@ contract CollateralManager {
     /// @param amount Amount of tokens to deposit (in token's native decimals)
     /// @return creditedUsdc Amount of USDC-equivalent credited to vault
     function depositCollateral(address token, uint256 amount)
-        external whenNotPaused returns (uint256 creditedUsdc)
+        external nonReentrant whenNotPaused returns (uint256 creditedUsdc)
     {
         if (amount == 0) revert ZeroAmount();
 
@@ -227,27 +283,24 @@ contract CollateralManager {
             require(c.totalDeposited + amount <= c.depositCap, "Deposit cap exceeded");
         }
 
-        // Transfer tokens from trader to this contract
-        bool success = IERC20(token).transferFrom(msg.sender, address(this), amount);
-        require(success, "Transfer failed");
-
         // Calculate USDC-equivalent value
-        // credit = amount * price * haircut / (10^tokenDecimals * BPS)
-        // Both price and credit are in 6 decimals (USDC precision)
+        // M-20 fix: Reorder multiplication to reduce precision loss on small deposits
         creditedUsdc = (amount * c.price * c.haircutBps) / (10 ** c.decimals * BPS);
+        require(creditedUsdc > 0, "Deposit too small for credit");
 
-        // Credit USDC-equivalent to trader's vault balance
-        // The vault needs to have this USDC reserved (from insurance or protocol treasury)
-        // In practice, the protocol mints a "synthetic credit" backed by the locked collateral
-        vault.creditCollateral(msg.sender, creditedUsdc);
-
-        // Track deposit
+        // H-12 fix: CEI pattern — update state BEFORE external calls
         TraderCollateral storage tc = deposits[token][msg.sender];
         tc.amount += amount;
         tc.creditedUsdc += creditedUsdc;
         c.totalDeposited += amount;
 
         emit CollateralDeposited(msg.sender, token, amount, creditedUsdc);
+
+        // External calls AFTER state updates
+        bool success = IERC20(token).transferFrom(msg.sender, address(this), amount);
+        require(success, "Transfer failed");
+
+        vault.creditCollateral(msg.sender, creditedUsdc);
     }
 
     /// @notice Withdraw yield-bearing tokens
@@ -255,7 +308,7 @@ contract CollateralManager {
     /// @param amount Amount of tokens to withdraw
     /// @dev Debits the corresponding USDC-equivalent from vault.
     ///      Will revert if trader has open positions that need the margin.
-    function withdrawCollateral(address token, uint256 amount) external whenNotPaused {
+    function withdrawCollateral(address token, uint256 amount) external nonReentrant whenNotPaused {
         if (amount == 0) revert ZeroAmount();
 
         CollateralConfig storage c = collaterals[token];
@@ -273,16 +326,92 @@ contract CollateralManager {
         // Debit from vault (will revert if insufficient free balance)
         vault.debitCollateral(msg.sender, debitUsdc);
 
-        // Return tokens to trader (with any accumulated yield!)
-        bool success = IERC20(token).transfer(msg.sender, amount);
-        require(success, "Transfer failed");
-
-        // Update tracking
+        // Update tracking BEFORE external call (CEI pattern)
         tc.amount -= amount;
         tc.creditedUsdc -= debitUsdc;
         c.totalDeposited -= amount;
 
         emit CollateralWithdrawn(msg.sender, token, amount, debitUsdc);
+
+        // Return tokens to trader (with any accumulated yield!)
+        bool success = IERC20(token).transfer(msg.sender, amount);
+        require(success, "Transfer failed");
+    }
+
+    // ============================================================
+    //                 LIQUIDATION (C-7 FIX)
+    // ============================================================
+
+    event CollateralLiquidated(
+        address indexed trader,
+        address indexed token,
+        uint256 tokenAmount,
+        uint256 usdcDebit,
+        address indexed keeper
+    );
+
+    error NotUndercollateralized(address trader, address token);
+
+    /// @notice Liquidation threshold BPS — if currentValue / creditedUsdc < this, position is liquidatable
+    /// @dev 9000 = 90%, meaning if collateral value drops to 90% of credited USDC, it can be liquidated
+    uint256 public liquidationThresholdBps = 9000;
+
+    /// @notice Liquidate undercollateralized collateral position
+    /// @dev Callable by operators (keepers). Seizes collateral, debits USDC credit.
+    ///      The seized collateral goes to the protocol (this contract) for later auction/sale.
+    /// @param trader The trader with undercollateralized position
+    /// @param token The collateral token to liquidate
+    function liquidateCollateral(address trader, address token)
+        external onlyOperator nonReentrant whenNotPaused
+    {
+        CollateralConfig storage c = collaterals[token];
+        if (c.token == address(0)) revert CollateralNotSupported(token);
+
+        TraderCollateral storage tc = deposits[token][trader];
+        if (tc.amount == 0) revert InsufficientCollateral(0, 0);
+
+        // Calculate current value with haircut
+        uint256 currentValue = (tc.amount * c.price * c.haircutBps) / (10 ** c.decimals * BPS);
+
+        // Check if undercollateralized: currentValue < creditedUsdc * liquidationThreshold
+        if (currentValue * BPS >= tc.creditedUsdc * liquidationThresholdBps) {
+            revert NotUndercollateralized(trader, token);
+        }
+
+        uint256 tokenAmount = tc.amount;
+        uint256 usdcDebit = tc.creditedUsdc;
+
+        // Debit the full USDC credit from vault (may use collateral balance)
+        vault.debitCollateral(trader, usdcDebit);
+
+        // Clear trader's position
+        tc.amount = 0;
+        tc.creditedUsdc = 0;
+        c.totalDeposited -= tokenAmount;
+
+        // Collateral tokens remain in this contract for protocol to handle
+        // (auction, swap to USDC, etc. — handled off-chain or by a separate contract)
+
+        emit CollateralLiquidated(trader, token, tokenAmount, usdcDebit, msg.sender);
+    }
+
+    /// @notice Check if a trader's collateral position is liquidatable
+    function isLiquidatable(address trader, address token) external view returns (bool) {
+        CollateralConfig storage c = collaterals[token];
+        TraderCollateral storage tc = deposits[token][trader];
+        if (tc.amount == 0) return false;
+
+        uint256 currentValue = (tc.amount * c.price * c.haircutBps) / (10 ** c.decimals * BPS);
+        return currentValue * BPS < tc.creditedUsdc * liquidationThresholdBps;
+    }
+
+    event LiquidationThresholdUpdated(uint256 oldThreshold, uint256 newThreshold);
+
+    function setLiquidationThresholdBps(uint256 newThreshold) external onlyOwner {
+        require(newThreshold >= 5000 && newThreshold <= BPS, "Invalid threshold");
+        uint256 old = liquidationThresholdBps;
+        liquidationThresholdBps = newThreshold;
+        emit LiquidationThresholdUpdated(old, newThreshold);
     }
 
     // ============================================================

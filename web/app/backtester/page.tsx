@@ -20,63 +20,73 @@ const ALL_ENGINES = [
   "Range Trader",
 ];
 
+/** Smart interval selection — more granular for shorter periods */
+const PERIOD_INTERVAL: Record<string, { interval: string; label: string; approxCandles: string }> = {
+  "7d":   { interval: "5m",  label: "5-min candles",  approxCandles: "~2,016" },
+  "30d":  { interval: "5m",  label: "5-min candles",  approxCandles: "~8,640" },
+  "90d":  { interval: "15m", label: "15-min candles", approxCandles: "~8,640" },
+  "365d": { interval: "1h",  label: "1-hour candles", approxCandles: "~8,760" },
+};
+
 // ============================================================
 //  TYPES
 // ============================================================
 
 interface EngineResult {
-  engine: string;
+  name: string;
   trades: number;
   winRate: number;
-  pf: number;
-  pnl: number;
+  profitFactor: number;
+  netPnl: number;
   avgWin: number;
   avgLoss: number;
-  holdTime: string;
+  avgHoldMin: number;
 }
 
 interface LeaderboardEntry {
   rank: number;
-  hash: string;
-  pnl: number;
+  configHash: string;
+  netPnl: number;
   sharpe: number;
-  maxDD: number;
+  maxDd: number;
   winRate: number;
-  pf: number;
+  profitFactor: number;
 }
 
 interface DailyPnl {
   date: string;
   pnl: number;
   trades: number;
+  cumPnl?: number;
 }
 
 interface TradeEntry {
   id: number;
   engine: string;
   side: string;
-  entry: number;
-  exit: number;
+  entryPrice: number;
+  exitPrice: number;
   pnl: number;
   fees: number;
-  duration: string;
-  reason: string;
+  durationMin: number;
+  exitReason: string;
 }
 
 interface BacktestResults {
   summary?: {
-    totalPnl: number;
+    netPnl: number;
     totalTrades: number;
     winRate: number;
     profitFactor: number;
     sharpe: number;
     maxDrawdown: number;
     maxDrawdownPct: number;
+    returnPct?: number;
   };
-  engineResults?: EngineResult[];
+  engines?: EngineResult[];
   leaderboard?: LeaderboardEntry[];
   dailyPnl?: DailyPnl[];
-  tradeLog?: TradeEntry[];
+  trades?: TradeEntry[];
 }
 
 // ============================================================
@@ -240,6 +250,7 @@ export default function BacktesterPage() {
 
   // Results state
   const [results, setResults] = useState<BacktestResults | null>(null);
+  const [dataInfo, setDataInfo] = useState<{ interval: string; count: number } | null>(null);
 
   // Worker ref
   const workerRef = useRef<Worker | null>(null);
@@ -277,7 +288,8 @@ export default function BacktesterPage() {
 
     // Step 1: Fetch price data from API
     try {
-      const res = await fetch(`${API}/api/prices/${market}?period=${period}`);
+      const intervalCfg = PERIOD_INTERVAL[period] || PERIOD_INTERVAL["30d"];
+      const res = await fetch(`${API}/api/prices/${market}?period=${period}&interval=${intervalCfg.interval}`);
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.message || `Failed to fetch price data (${res.status})`);
@@ -287,6 +299,8 @@ export default function BacktesterPage() {
       if (!priceData.candles || priceData.candles.length === 0) {
         throw new Error("No price data available for the selected market and period.");
       }
+
+      setDataInfo({ interval: priceData.interval || intervalCfg.interval, count: priceData.candles.length });
 
       // Step 2: Create Web Worker and run backtest
       setStatus("running");
@@ -339,27 +353,28 @@ export default function BacktesterPage() {
   };
 
   // Derived values from results
-  const engineResults = results?.engineResults || [];
+  const engineResults = results?.engines || [];
   const leaderboard = results?.leaderboard || [];
   const dailyPnl = results?.dailyPnl || [];
-  const tradeLog = results?.tradeLog || [];
+  const tradeLog = results?.trades || [];
   const summary = results?.summary;
 
-  const totalPnl = summary?.totalPnl ?? engineResults.reduce((s, e) => s + e.pnl, 0);
+  const totalPnl = summary?.netPnl ?? engineResults.reduce((s, e) => s + e.netPnl, 0);
   const totalTrades = summary?.totalTrades ?? engineResults.reduce((s, e) => s + e.trades, 0);
-  const overallWinRate = summary?.winRate ?? (totalTrades > 0 ? engineResults.reduce((s, e) => s + Math.round(e.trades * e.winRate / 100), 0) / totalTrades * 100 : 0);
+  const overallWinRate = summary?.winRate ?? 0;
   const profitFactor = summary?.profitFactor ?? 0;
   const sharpe = summary?.sharpe ?? 0;
   const maxDrawdownPct = summary?.maxDrawdownPct ?? 0;
   const maxDrawdownAbs = summary?.maxDrawdown ?? 0;
   const capitalNum = parseFloat(capital) || 100000;
-  const pnlPct = summary ? (totalPnl / capitalNum) * 100 : 0;
+  const pnlPct = summary?.returnPct ?? (capitalNum > 0 ? (totalPnl / capitalNum) * 100 : 0);
 
   const totalWins = totalTrades > 0 ? Math.round(totalTrades * overallWinRate / 100) : 0;
 
   // Cumulative P&L for daily table
   let cumulative = 0;
   const dailyWithCum = dailyPnl.map(d => {
+    if (d.cumPnl !== undefined) return d as DailyPnl & { cumPnl: number };
     cumulative += d.pnl;
     return { ...d, cumPnl: cumulative };
   });
@@ -371,7 +386,7 @@ export default function BacktesterPage() {
       <div className="max-w-6xl mx-auto px-6 py-8">
 
         {/* ===== HEADER ===== */}
-        <div className="flex items-center justify-between mb-8">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-8">
           <div className="flex items-center gap-4">
             <div className="w-10 h-10 rounded-xl bg-sur-accent/10 flex items-center justify-center">
               <IconFlask className="text-sur-accent" />
@@ -419,7 +434,7 @@ export default function BacktesterPage() {
         {/* ===== CONFIGURATION PANEL ===== */}
         <div className="bg-sur-surface border border-sur-border rounded-xl p-6 mb-6">
           <div className="text-[10px] text-sur-muted font-medium uppercase tracking-wider mb-4">Configuration</div>
-          <div className="grid grid-cols-2 gap-8">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
 
             {/* Left column */}
             <div className="space-y-4">
@@ -451,6 +466,9 @@ export default function BacktesterPage() {
                       {p.toUpperCase()}
                     </button>
                   ))}
+                </div>
+                <div className="text-[10px] text-sur-muted mt-1.5">
+                  Resolution: {(PERIOD_INTERVAL[period] || PERIOD_INTERVAL["30d"]).label} ({(PERIOD_INTERVAL[period] || PERIOD_INTERVAL["30d"]).approxCandles} data points)
                 </div>
               </div>
 
@@ -551,7 +569,7 @@ export default function BacktesterPage() {
             </div>
             <p className="text-[13px] font-medium mb-1">Fetching historical prices...</p>
             <p className="text-[11px] text-sur-muted">
-              Downloading {market} candles for the past {period.toUpperCase()}
+              Downloading {market} {(PERIOD_INTERVAL[period] || PERIOD_INTERVAL["30d"]).label} for the past {period.toUpperCase()} ({(PERIOD_INTERVAL[period] || PERIOD_INTERVAL["30d"]).approxCandles} data points)
             </p>
           </div>
         )}
@@ -612,8 +630,25 @@ export default function BacktesterPage() {
         {/* ===== RESULTS ===== */}
         {status === "complete" && results && (
           <>
+            {/* Data Resolution Badge */}
+            {dataInfo && (
+              <div className="flex items-center gap-2 mb-4">
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/[0.04] border border-sur-border text-[10px] font-medium text-sur-muted">
+                  <IconChart className="text-sur-muted" />
+                  {dataInfo.count.toLocaleString()} real Binance candles @ {dataInfo.interval} resolution
+                </span>
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/[0.04] border border-sur-border text-[10px] font-medium text-sur-muted">
+                  {period.toUpperCase()} period &middot; {market}
+                </span>
+                {mode !== "single" && (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/[0.04] border border-sur-border text-[10px] font-medium text-sur-muted">
+                    {iterations} Monte Carlo iterations
+                  </span>
+                )}
+              </div>
+            )}
             {/* Results Summary */}
-            <div className="grid grid-cols-6 gap-3 mb-6">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-6">
               <StatCard
                 label="Net P&L"
                 value={fmtSigned(totalPnl)}
@@ -652,8 +687,8 @@ export default function BacktesterPage() {
             {engineResults.length > 0 && (
               <div className="mb-6">
                 <SectionHeader icon={<IconChart />} title="Engine Breakdown" badge={`${engineResults.length} engines`} />
-                <div className="bg-sur-surface border border-sur-border rounded-xl overflow-hidden">
-                  <table className="w-full">
+                <div className="bg-sur-surface border border-sur-border rounded-xl overflow-x-auto">
+                  <table className="w-full min-w-[640px]">
                     <thead>
                       <tr className="text-[10px] text-sur-muted font-medium uppercase tracking-wider border-b border-sur-border">
                         {["Engine", "Trades", "Win Rate", "Profit Factor", "Net P&L", "Avg Win", "Avg Loss", "Avg Hold"].map(h => (
@@ -664,28 +699,28 @@ export default function BacktesterPage() {
                     <tbody>
                       {engineResults.map((row) => (
                         <tr
-                          key={row.engine}
+                          key={row.name}
                           className={`text-[11px] border-t border-sur-border/40 transition-colors hover:bg-white/[0.02] ${
-                            row.pnl >= 0 ? "bg-sur-green/[0.02]" : "bg-sur-red/[0.02]"
+                            row.netPnl >= 0 ? "bg-sur-green/[0.02]" : "bg-sur-red/[0.02]"
                           }`}
                         >
                           <td className="px-4 py-2.5 font-medium">
                             <div className="flex items-center gap-2">
-                              <span className={`w-1.5 h-1.5 rounded-full ${row.pnl >= 0 ? "bg-sur-green" : "bg-sur-red"}`} />
-                              {row.engine}
+                              <span className={`w-1.5 h-1.5 rounded-full ${row.netPnl >= 0 ? "bg-sur-green" : "bg-sur-red"}`} />
+                              {row.name}
                             </div>
                           </td>
                           <td className="text-right px-4 py-2.5 tabular-nums text-sur-muted">{row.trades}</td>
                           <td className="text-right px-4 py-2.5 tabular-nums">{row.winRate.toFixed(1)}%</td>
-                          <td className={`text-right px-4 py-2.5 tabular-nums ${row.pf >= 1.5 ? "text-sur-green" : row.pf < 1 ? "text-sur-red" : "text-sur-text"}`}>
-                            {row.pf.toFixed(2)}
+                          <td className={`text-right px-4 py-2.5 tabular-nums ${row.profitFactor >= 1.5 ? "text-sur-green" : row.profitFactor < 1 ? "text-sur-red" : "text-sur-text"}`}>
+                            {row.profitFactor.toFixed(2)}
                           </td>
-                          <td className={`text-right px-4 py-2.5 tabular-nums font-semibold ${row.pnl >= 0 ? "text-sur-green" : "text-sur-red"}`}>
-                            {fmtSigned(row.pnl)}
+                          <td className={`text-right px-4 py-2.5 tabular-nums font-semibold ${row.netPnl >= 0 ? "text-sur-green" : "text-sur-red"}`}>
+                            {fmtSigned(row.netPnl)}
                           </td>
                           <td className="text-right px-4 py-2.5 tabular-nums text-sur-green">{fmt(row.avgWin)}</td>
                           <td className="text-right px-4 py-2.5 tabular-nums text-sur-red">{fmt(row.avgLoss)}</td>
-                          <td className="text-right px-4 py-2.5 tabular-nums text-sur-muted">{row.holdTime}</td>
+                          <td className="text-right px-4 py-2.5 tabular-nums text-sur-muted">{row.avgHoldMin < 60 ? `${Math.round(row.avgHoldMin)}m` : `${(row.avgHoldMin / 60).toFixed(1)}h`}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -698,8 +733,8 @@ export default function BacktesterPage() {
             {mode !== "single" && leaderboard.length > 0 && (
               <div className="mb-6">
                 <SectionHeader icon={<IconTrophy />} title="Strategy Leaderboard" badge={`Top ${leaderboard.length} Parameter Sets`} />
-                <div className="bg-sur-surface border border-sur-border rounded-xl overflow-hidden">
-                  <table className="w-full">
+                <div className="bg-sur-surface border border-sur-border rounded-xl overflow-x-auto">
+                  <table className="w-full min-w-[640px]">
                     <thead>
                       <tr className="text-[10px] text-sur-muted font-medium uppercase tracking-wider border-b border-sur-border">
                         {["Rank", "Config Hash", "Net P&L", "Sharpe", "Max DD", "Win Rate", "Profit Factor"].map(h => (
@@ -720,12 +755,12 @@ export default function BacktesterPage() {
                           <td className="text-center px-4 py-2.5">
                             <RankBadge rank={row.rank} />
                           </td>
-                          <td className="px-4 py-2.5 font-mono text-[10px] text-sur-muted">{row.hash}</td>
-                          <td className="text-right px-4 py-2.5 tabular-nums font-semibold text-sur-green">{fmtSigned(row.pnl)}</td>
+                          <td className="px-4 py-2.5 font-mono text-[10px] text-sur-muted">{row.configHash}</td>
+                          <td className="text-right px-4 py-2.5 tabular-nums font-semibold text-sur-green">{fmtSigned(row.netPnl)}</td>
                           <td className="text-right px-4 py-2.5 tabular-nums">{row.sharpe.toFixed(2)}</td>
-                          <td className="text-right px-4 py-2.5 tabular-nums text-sur-red">{row.maxDD.toFixed(1)}%</td>
+                          <td className="text-right px-4 py-2.5 tabular-nums text-sur-red">{row.maxDd.toFixed(1)}%</td>
                           <td className="text-right px-4 py-2.5 tabular-nums">{row.winRate.toFixed(1)}%</td>
-                          <td className="text-right px-4 py-2.5 tabular-nums">{row.pf.toFixed(2)}</td>
+                          <td className="text-right px-4 py-2.5 tabular-nums">{row.profitFactor.toFixed(2)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -738,8 +773,8 @@ export default function BacktesterPage() {
             {dailyPnl.length > 0 && (
               <div className="mb-6">
                 <SectionHeader icon={<IconChart />} title="Daily P&L Breakdown" />
-                <div className="bg-sur-surface border border-sur-border rounded-xl overflow-hidden">
-                  <table className="w-full">
+                <div className="bg-sur-surface border border-sur-border rounded-xl overflow-x-auto">
+                  <table className="w-full min-w-[640px]">
                     <thead>
                       <tr className="text-[10px] text-sur-muted font-medium uppercase tracking-wider border-b border-sur-border">
                         {["Date", "P&L", "Trades", "Cumulative P&L"].map(h => (
@@ -804,23 +839,23 @@ export default function BacktesterPage() {
                               </span>
                             </td>
                             <td className="text-right px-3 py-2.5 tabular-nums font-mono text-[10px]">
-                              ${row.entry.toLocaleString("en", { minimumFractionDigits: 2 })}
+                              ${row.entryPrice.toLocaleString("en", { minimumFractionDigits: 2 })}
                             </td>
                             <td className="text-right px-3 py-2.5 tabular-nums font-mono text-[10px]">
-                              ${row.exit.toLocaleString("en", { minimumFractionDigits: 2 })}
+                              ${row.exitPrice.toLocaleString("en", { minimumFractionDigits: 2 })}
                             </td>
                             <td className={`text-right px-3 py-2.5 tabular-nums font-semibold ${row.pnl >= 0 ? "text-sur-green" : "text-sur-red"}`}>
                               {fmtSigned(row.pnl)}
                             </td>
                             <td className="text-right px-3 py-2.5 tabular-nums text-sur-muted">${row.fees.toFixed(2)}</td>
-                            <td className="text-right px-3 py-2.5 tabular-nums text-sur-muted">{row.duration}</td>
+                            <td className="text-right px-3 py-2.5 tabular-nums text-sur-muted">{row.durationMin < 60 ? `${Math.round(row.durationMin)}m` : `${(row.durationMin / 60).toFixed(1)}h`}</td>
                             <td className="px-3 py-2.5">
                               <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded ${
-                                row.reason === "TP Hit" ? "bg-sur-green/10 text-sur-green" :
-                                row.reason === "SL Hit" ? "bg-sur-red/10 text-sur-red" :
+                                row.exitReason === "TP Hit" ? "bg-sur-green/10 text-sur-green" :
+                                row.exitReason === "SL Hit" ? "bg-sur-red/10 text-sur-red" :
                                 "bg-sur-yellow/10 text-sur-yellow"
                               }`}>
-                                {row.reason}
+                                {row.exitReason}
                               </span>
                             </td>
                           </tr>

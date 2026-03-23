@@ -1,16 +1,84 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useEffect, useMemo, memo } from "react";
 import { useTrading } from "@/providers/TradingProvider";
 import { fmtPrice, fmtSize } from "@/lib/constants";
 import { computePaperPnl } from "@/lib/trading-store";
+
+/** Inline editable price field — click to edit, Enter/blur to save */
+function EditablePrice({
+  value,
+  placeholder,
+  onSave,
+  className = "",
+}: {
+  value: number | undefined;
+  placeholder: string;
+  onSave: (v: number | null) => void;
+  className?: string;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (editing) inputRef.current?.focus();
+  }, [editing]);
+
+  const startEdit = () => {
+    setDraft(value ? value.toString() : "");
+    setEditing(true);
+  };
+
+  const commit = () => {
+    setEditing(false);
+    const trimmed = draft.trim();
+    if (trimmed === "" || trimmed === "0") {
+      onSave(null); // clear
+      return;
+    }
+    const num = parseFloat(trimmed);
+    if (!isNaN(num) && num > 0) onSave(num);
+  };
+
+  if (editing) {
+    return (
+      <input
+        ref={inputRef}
+        type="text"
+        inputMode="decimal"
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") commit();
+          if (e.key === "Escape") setEditing(false);
+        }}
+        className="w-[72px] bg-sur-bg border border-sur-accent/50 rounded px-1.5 py-0.5 text-[10px] text-right text-sur-text tabular-nums outline-none focus:border-sur-accent"
+      />
+    );
+  }
+
+  return (
+    <button
+      onClick={startEdit}
+      className={`text-[10px] tabular-nums transition-colors ${
+        value
+          ? `${className} hover:underline`
+          : "text-sur-muted/50 hover:text-sur-muted"
+      }`}
+    >
+      {value ? fmtPrice(value) : placeholder}
+    </button>
+  );
+}
 
 export function PositionsPanel() {
   const { state, dispatch, send, market } = useTrading();
   const [tab, setTab] = useState<"positions" | "orders" | "history" | "funding">("positions");
 
   // Use paper positions if in paper mode, otherwise real positions
-  const paperPositionsWithPnl = state.paperPositions.map(p => {
+  const paperPositionsWithPnl = useMemo(() => state.paperPositions.map(p => {
     const mp = state.markPrice > 0 ? state.markPrice : p.entryPrice;
     const { pnl, pnlPct, liqPrice } = computePaperPnl(p, mp);
     return {
@@ -26,8 +94,10 @@ export function PositionsPanel() {
       leverage: p.leverage,
       liqPrice,
       id: p.id,
+      tp: p.tp,
+      sl: p.sl,
     };
-  });
+  }), [state.paperPositions, state.markPrice]);
 
   const positions = state.paperMode ? paperPositionsWithPnl : state.positions;
   const orders = state.paperMode ? state.paperOrders : state.openOrders;
@@ -42,7 +112,6 @@ export function PositionsPanel() {
 
   const closePosition = (posId: string) => {
     if (!state.paperMode) return;
-    // Get close price from mark price, or mid price from orderbook
     const bestBid = state.bids[0]?.price || 0;
     const bestAsk = state.asks[0]?.price || 0;
     const midPrice = bestBid > 0 && bestAsk > 0 ? (bestBid + bestAsk) / 2 : (bestBid || bestAsk);
@@ -55,6 +124,10 @@ export function PositionsPanel() {
       feeBps: market.takerFeeBps,
     });
     setTimeout(() => dispatch({ type: "CLEAR_ORDER_STATUS" }), 3000);
+  };
+
+  const updateTpSl = (posId: string, tp?: number | null, sl?: number | null) => {
+    dispatch({ type: "PAPER_UPDATE_TPSL", positionId: posId, tp, sl });
   };
 
   const tradeHistory = state.paperMode ? state.paperTradeHistory : [];
@@ -100,52 +173,83 @@ export function PositionsPanel() {
               No open positions
             </div>
           ) : (
-            <table className="w-full">
-              <thead>
-                <tr className="text-[9px] text-sur-muted font-medium uppercase tracking-wider">
-                  {["Market", "Size", "Entry", "Mark", "PnL", "Margin", "Liq", ""].map((h) => (
-                    <th key={h} className={`${h === "Market" ? "text-left" : "text-right"} px-3 py-1.5 font-medium`}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {positions.map((p, i) => {
-                  const isPosProfit = p.pnl >= 0;
-                  return (
-                    <tr key={i} className="text-[11px] hover:bg-white/[0.02] border-t border-sur-border/50">
-                      <td className="px-3 py-2">
-                        <div className="flex items-center gap-2">
-                          <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded ${
-                            p.side === "long" ? "bg-sur-green/10 text-sur-green" : "bg-sur-red/10 text-sur-red"
-                          }`}>
-                            {p.side === "long" ? "LONG" : "SHORT"}
-                          </span>
-                          <span className="font-medium">{p.market}</span>
-                          <span className="text-sur-muted text-[10px]">{p.leverage}x</span>
-                        </div>
-                      </td>
-                      <td className="text-right px-3 py-2 tabular-nums">{fmtSize(p.size)}</td>
-                      <td className="text-right px-3 py-2 tabular-nums">{fmtPrice(p.entryPrice)}</td>
-                      <td className="text-right px-3 py-2 tabular-nums">{fmtPrice(p.markPrice)}</td>
-                      <td className={`text-right px-3 py-2 tabular-nums font-medium ${isPosProfit ? "text-sur-green" : "text-sur-red"}`}>
-                        <div>{isPosProfit ? "+" : ""}${Math.abs(p.pnl).toFixed(2)}</div>
-                        <div className="text-[9px]">{isPosProfit ? "+" : ""}{p.pnlPct.toFixed(2)}%</div>
-                      </td>
-                      <td className="text-right px-3 py-2 tabular-nums">${p.margin.toFixed(2)}</td>
-                      <td className="text-right px-3 py-2 tabular-nums text-sur-yellow">${fmtPrice(p.liqPrice)}</td>
-                      <td className="text-right px-3 py-2">
-                        <button
-                          onClick={() => closePosition((p as any).id || "")}
-                          className="text-[9px] px-2 py-1 rounded bg-sur-border/50 text-sur-muted hover:text-sur-red hover:bg-sur-red/10 transition-colors"
-                        >
-                          Close
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[700px]">
+                <thead>
+                  <tr className="text-[9px] text-sur-muted font-medium uppercase tracking-wider">
+                    {["Market", "Size", "Entry", "Mark", "PnL", "TP", "SL", "Margin", "Liq", ""].map((h) => (
+                      <th key={h} className={`${h === "Market" ? "text-left" : "text-right"} px-3 py-1.5 font-medium`}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {positions.map((p, i) => {
+                    const isPosProfit = p.pnl >= 0;
+                    const isPaper = state.paperMode;
+                    const tp = isPaper ? (p as any).tp : undefined;
+                    const sl = isPaper ? (p as any).sl : undefined;
+                    const posId = (p as any).id || "";
+                    return (
+                      <tr key={i} className="text-[11px] hover:bg-white/[0.02] border-t border-sur-border/50">
+                        <td className="px-3 py-2">
+                          <div className="flex items-center gap-2">
+                            <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded ${
+                              p.side === "long" ? "bg-sur-green/10 text-sur-green" : "bg-sur-red/10 text-sur-red"
+                            }`}>
+                              {p.side === "long" ? "LONG" : "SHORT"}
+                            </span>
+                            <span className="font-medium">{p.market}</span>
+                            <span className="text-sur-muted text-[10px]">{p.leverage}x</span>
+                          </div>
+                        </td>
+                        <td className="text-right px-3 py-2 tabular-nums">{fmtSize(p.size)}</td>
+                        <td className="text-right px-3 py-2 tabular-nums">{fmtPrice(p.entryPrice)}</td>
+                        <td className="text-right px-3 py-2 tabular-nums">{fmtPrice(p.markPrice)}</td>
+                        <td className={`text-right px-3 py-2 tabular-nums font-medium ${isPosProfit ? "text-sur-green" : "text-sur-red"}`}>
+                          <div>{isPosProfit ? "+" : ""}${Math.abs(p.pnl).toFixed(2)}</div>
+                          <div className="text-[9px]">{isPosProfit ? "+" : ""}{p.pnlPct.toFixed(2)}%</div>
+                        </td>
+                        {/* TP/SL columns — editable in paper mode */}
+                        <td className="text-right px-3 py-2">
+                          {isPaper ? (
+                            <EditablePrice
+                              value={tp}
+                              placeholder="+ TP"
+                              onSave={(v) => updateTpSl(posId, v)}
+                              className="text-sur-green"
+                            />
+                          ) : (
+                            <span className="text-[10px] tabular-nums text-sur-muted">—</span>
+                          )}
+                        </td>
+                        <td className="text-right px-3 py-2">
+                          {isPaper ? (
+                            <EditablePrice
+                              value={sl}
+                              placeholder="+ SL"
+                              onSave={(v) => updateTpSl(posId, undefined, v)}
+                              className="text-sur-red"
+                            />
+                          ) : (
+                            <span className="text-[10px] tabular-nums text-sur-muted">—</span>
+                          )}
+                        </td>
+                        <td className="text-right px-3 py-2 tabular-nums">${p.margin.toFixed(2)}</td>
+                        <td className="text-right px-3 py-2 tabular-nums text-sur-yellow">${fmtPrice(p.liqPrice)}</td>
+                        <td className="text-right px-3 py-2">
+                          <button
+                            onClick={() => closePosition(posId)}
+                            className="text-[9px] px-2 py-1 rounded bg-sur-border/50 text-sur-muted hover:text-sur-red hover:bg-sur-red/10 transition-colors"
+                          >
+                            Close
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           )
         )}
 
@@ -165,14 +269,22 @@ export function PositionsPanel() {
                 </tr>
               </thead>
               <tbody>
-                {orders.map((o: any) => (
+                {orders.map((o: any) => {
+                  const ot = o.orderType || "limit";
+                  const typeLabel = ot === "stopMarket" ? "Stop Mkt" : ot === "stopLimit" ? "Stop Lim" : "Limit";
+                  return (
                   <tr key={o.id} className="text-[11px] hover:bg-white/[0.02] border-t border-sur-border/50">
-                    <td className="px-3 py-2 font-medium">{o.market}</td>
+                    <td className="px-3 py-2 font-medium">
+                      {o.market}
+                      {o.ocoGroupId && <span className="ml-1 text-[8px] text-sur-accent font-semibold">OCO</span>}
+                    </td>
                     <td className={`px-3 py-2 ${o.side === "buy" ? "text-sur-green" : "text-sur-red"}`}>
                       {o.side.toUpperCase()}
                     </td>
-                    <td className="px-3 py-2 text-sur-muted">Limit</td>
-                    <td className="text-right px-3 py-2 tabular-nums">{fmtPrice(o.price)}</td>
+                    <td className="px-3 py-2 text-sur-muted">{typeLabel}</td>
+                    <td className="text-right px-3 py-2 tabular-nums">
+                      {ot === "stopMarket" && o.stopPrice ? `@${fmtPrice(o.stopPrice)}` : fmtPrice(o.price)}
+                    </td>
                     <td className="text-right px-3 py-2 tabular-nums">{fmtSize(o.size)}</td>
                     <td className="text-right px-3 py-2 tabular-nums text-sur-muted">{o.leverage}x</td>
                     <td className="text-right px-3 py-2">
@@ -184,7 +296,8 @@ export function PositionsPanel() {
                       </button>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           )

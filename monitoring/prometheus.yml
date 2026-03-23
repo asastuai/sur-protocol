@@ -1,0 +1,82 @@
+# SUR Protocol - Prometheus Scrape Configuration
+# Scrapes metrics from all 4 backend services + self-monitoring
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  scrape_timeout: 10s
+
+  external_labels:
+    cluster: "sur-protocol"
+    environment: "production"
+
+# Alertmanager integration
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - "alertmanager:9093"
+
+# Load alerting rules
+rule_files:
+  - "/etc/prometheus/alerting-rules.yml"
+
+scrape_configs:
+  # -------------------------------------------------------
+  # Prometheus self-monitoring
+  # -------------------------------------------------------
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # -------------------------------------------------------
+  # SUR API — WebSocket order matching server
+  # Default HTTP port 3002 (same port serves WS + /metrics)
+  # -------------------------------------------------------
+  - job_name: "sur-api"
+    metrics_path: /metrics
+    scrape_interval: 10s
+    static_configs:
+      - targets: ["sur-api:3002"]
+        labels:
+          service: "api"
+          component: "order-matching"
+
+  # -------------------------------------------------------
+  # SUR Keeper — Liquidation bot
+  # Health/metrics port 3010
+  # -------------------------------------------------------
+  - job_name: "sur-keeper"
+    metrics_path: /metrics
+    scrape_interval: 10s
+    static_configs:
+      - targets: ["sur-keeper:3010"]
+        labels:
+          service: "keeper"
+          component: "liquidation"
+
+  # -------------------------------------------------------
+  # SUR Oracle Keeper — Price feed pusher
+  # Health/metrics port 3011
+  # -------------------------------------------------------
+  - job_name: "sur-oracle"
+    metrics_path: /metrics
+    scrape_interval: 10s
+    static_configs:
+      - targets: ["sur-oracle:3011"]
+        labels:
+          service: "oracle"
+          component: "price-feed"
+
+  # -------------------------------------------------------
+  # SUR Funding Bot — Funding rate application
+  # Health/metrics port 3012
+  # -------------------------------------------------------
+  - job_name: "sur-funding"
+    metrics_path: /metrics
+    scrape_interval: 10s
+    static_configs:
+      - targets: ["sur-funding:3012"]
+        labels:
+          service: "funding"
+          component: "funding-rate"

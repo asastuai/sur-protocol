@@ -41,7 +41,7 @@ contract TradingVaultTest is Test {
     function setUp() public {
         usdc = new MockUSDC();
         perpVault = new PerpVault(address(usdc), owner, 0);
-        engine = new PerpEngine(address(perpVault), owner, feeRecipient, insuranceFund);
+        engine = new PerpEngine(address(perpVault), owner, feeRecipient, insuranceFund, feeRecipient);
         tv = new TradingVault(address(perpVault), address(engine), owner);
 
         // Set TradingVault as operator on PerpVault (for internalTransfer)

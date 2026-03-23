@@ -10,8 +10,8 @@
  * This data is served to the frontend via the WebSocket API.
  */
 
-import { createPublicClient, http, type PublicClient, type Hex, type Chain } from "viem";
-import { type Config, ENGINE_ABI, VAULT_ABI } from "../config/index.js";
+import { createPublicClient, type PublicClient, type Hex, type Chain } from "viem";
+import { type Config, ENGINE_ABI, VAULT_ABI, createTransport } from "../config/index.js";
 
 export class OnChainIndexer {
   private client: PublicClient;
@@ -21,7 +21,7 @@ export class OnChainIndexer {
     this.config = config;
     this.client = createPublicClient({
       chain: config.chain as Chain,
-      transport: http(config.rpcUrl),
+      transport: createTransport(config),
     });
   }
 

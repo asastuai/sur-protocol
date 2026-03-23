@@ -31,7 +31,7 @@ contract A2ADarkPoolTest is Test {
         usdc = new MockUSDC();
         vault = new PerpVault(address(usdc), owner, 0);
         insurance = new InsuranceFund(address(vault), owner);
-        engine = new PerpEngine(address(vault), owner, feeRecipient, address(insurance));
+        engine = new PerpEngine(address(vault), owner, feeRecipient, address(insurance), feeRecipient);
         pool = new A2ADarkPool(address(vault), address(engine), feeRecipient, owner);
 
         btcMarket = keccak256(abi.encodePacked("BTC-USD"));
@@ -45,6 +45,7 @@ contract A2ADarkPoolTest is Test {
         engine.addMarket("BTC-USD", 500, 250, 10_000 * SIZE_U, 28800);
         engine.updateMarkPrice(btcMarket, 50_000 * USDC_U, 50_000 * USDC_U);
         engine.setMaxExposureBps(0); // disable for dark pool tests
+        engine.setOiSkewCap(10000);  // disable skew cap for tests
         vm.stopPrank();
 
         // Fund agents

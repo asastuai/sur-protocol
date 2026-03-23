@@ -32,6 +32,7 @@ import {
   createPublicClient,
   createWalletClient,
   http,
+  fallback,
   type Hex,
   type Chain,
   keccak256,
@@ -52,7 +53,7 @@ interface OracleKeeperConfig {
   oracleRouterAddress: Hex;
   keeperPrivateKey: Hex;
   pushIntervalMs: number;
-  hermesUrl: string;
+  hermesUrls: string[]; // primary + fallbacks
   markets: MarketFeedConfig[];
   maxGasPriceGwei: number;
   minBalanceEth: number;
@@ -83,13 +84,40 @@ function loadConfig(): OracleKeeperConfig {
     pythFeedId: "0xff61491a931112ddf1bd8147cd1b641375f79f5825126d665480874634fd0ace" as Hex,
   });
 
+  // Validate private key
+  const pk = process.env.KEEPER_PRIVATE_KEY;
+  if (!pk || pk === "0x" || !/^0x[a-fA-F0-9]{64}$/.test(pk)) {
+    console.error("[Fatal] KEEPER_PRIVATE_KEY is missing or invalid.");
+    console.error("  → Must be a 32-byte hex string (0x + 64 hex chars).");
+    console.error("  → Set it in Railway env vars, NOT in .env files.");
+    process.exit(1);
+  }
+
+  // Validate oracle router address
+  const oracleAddr = process.env.ORACLE_ROUTER_ADDRESS;
+  if (!oracleAddr || oracleAddr === "0x" || !/^0x[a-fA-F0-9]{40}$/.test(oracleAddr)) {
+    console.error(`[Fatal] ORACLE_ROUTER_ADDRESS is missing or invalid (got: "${oracleAddr || ""}")`);
+    process.exit(1);
+  }
+
+  // Validate RPC URL for mainnet
+  if (!isTestnet && !process.env.RPC_URL) {
+    console.error("[Fatal] RPC_URL is required for mainnet.");
+    process.exit(1);
+  }
+
   return {
     chain: isTestnet ? baseSepolia : base,
     rpcUrl: process.env.RPC_URL || "https://sepolia.base.org",
-    oracleRouterAddress: (process.env.ORACLE_ROUTER_ADDRESS || "0x") as Hex,
-    keeperPrivateKey: (process.env.KEEPER_PRIVATE_KEY || "0x") as Hex,
+    oracleRouterAddress: oracleAddr as Hex,
+    keeperPrivateKey: pk as Hex,
     pushIntervalMs: parseInt(process.env.PUSH_INTERVAL_MS || "5000"),
-    hermesUrl: process.env.HERMES_URL || "https://hermes.pyth.network",
+    hermesUrls: [
+      process.env.HERMES_URL || "https://hermes.pyth.network",
+      ...(process.env.HERMES_URLS_FALLBACK
+        ? process.env.HERMES_URLS_FALLBACK.split(",").map((u) => u.trim()).filter(Boolean)
+        : ["https://hermes-beta.pyth.network"]), // default fallback
+    ],
     markets,
     maxGasPriceGwei: parseInt(process.env.MAX_GAS_PRICE_GWEI || "50"),
     minBalanceEth: parseFloat(process.env.MIN_BALANCE_ETH || "0.005"),
@@ -157,37 +185,73 @@ const PYTH_ADDRESS: Record<number, Hex> = {
 };
 
 // ============================================================
+//                    RETRY WITH BACKOFF
+// ============================================================
+
+async function retryWithBackoff<T>(
+  fn: () => Promise<T>,
+  opts: { maxRetries?: number; baseDelayMs?: number; label?: string } = {}
+): Promise<T> {
+  const { maxRetries = 3, baseDelayMs = 1000, label = "operation" } = opts;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (attempt === maxRetries) throw err;
+      const delay = Math.min(baseDelayMs * Math.pow(2, attempt), 10_000);
+      console.warn(
+        `[Retry] ${label} failed (attempt ${attempt + 1}/${maxRetries + 1}), retrying in ${delay}ms: ${(err as Error).message?.slice(0, 80)}`
+      );
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+  throw new Error("unreachable");
+}
+
+// ============================================================
 //                    HERMES CLIENT
 // ============================================================
 
 async function fetchPythPriceUpdates(
-  hermesUrl: string,
+  hermesUrls: string[],
   feedIds: Hex[]
 ): Promise<{ updateData: Hex[]; prices: Map<string, { price: number; conf: number }> }> {
-  // Pyth Hermes v2 API
   const ids = feedIds.map((id) => id.slice(2)); // remove 0x prefix
-  const url = `${hermesUrl}/v2/updates/price/latest?${ids.map((id) => `ids[]=${id}`).join("&")}&encoding=hex&parsed=true`;
+  const queryParams = ids.map((id) => `ids[]=${id}`).join("&");
 
-  const resp = await fetch(url);
-  if (!resp.ok) throw new Error(`Hermes API error: ${resp.status} ${resp.statusText}`);
+  // Try each Hermes endpoint until one succeeds
+  let lastError: Error | null = null;
+  for (const hermesUrl of hermesUrls) {
+    try {
+      const url = `${hermesUrl}/v2/updates/price/latest?${queryParams}&encoding=hex&parsed=true`;
+      const resp = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+      if (!resp.ok) throw new Error(`Hermes API error: ${resp.status} ${resp.statusText}`);
 
-  const data = await resp.json();
+      const data = await resp.json();
 
-  // Extract binary update data (VAAs)
-  const updateData: Hex[] = data.binary.data.map((d: string) => `0x${d}` as Hex);
+      // Extract binary update data (VAAs)
+      const updateData: Hex[] = data.binary.data.map((d: string) => `0x${d}` as Hex);
 
-  // Extract parsed prices for logging
-  const prices = new Map<string, { price: number; conf: number }>();
-  for (const parsed of data.parsed || []) {
-    const feedId = "0x" + parsed.id;
-    const priceData = parsed.price;
-    const expo = priceData.expo;
-    const price = Number(priceData.price) * Math.pow(10, expo);
-    const conf = Number(priceData.conf) * Math.pow(10, expo);
-    prices.set(feedId, { price, conf });
+      // Extract parsed prices for logging
+      const prices = new Map<string, { price: number; conf: number }>();
+      for (const parsed of data.parsed || []) {
+        const feedId = "0x" + parsed.id;
+        const priceData = parsed.price;
+        const expo = priceData.expo;
+        const price = Number(priceData.price) * Math.pow(10, expo);
+        const conf = Number(priceData.conf) * Math.pow(10, expo);
+        prices.set(feedId, { price, conf });
+      }
+
+      return { updateData, prices };
+    } catch (err) {
+      lastError = err as Error;
+      console.warn(`[Hermes] ${hermesUrl} failed: ${lastError.message.slice(0, 80)}`);
+    }
   }
 
-  return { updateData, prices };
+  throw new Error(`All Hermes endpoints failed. Last error: ${lastError?.message}`);
 }
 
 // ============================================================
@@ -238,19 +302,32 @@ async function main() {
   console.log(`[Config] Keeper:        ${account.address}`);
   console.log(`[Config] OracleRouter:  ${config.oracleRouterAddress}`);
   console.log(`[Config] Push interval: ${config.pushIntervalMs}ms`);
-  console.log(`[Config] Hermes:        ${config.hermesUrl}`);
+  console.log(`[Config] Hermes:        ${config.hermesUrls[0]}${config.hermesUrls.length > 1 ? ` (+${config.hermesUrls.length - 1} fallback)` : ""}`);
   console.log(`[Config] Markets:       ${config.markets.map((m) => m.name).join(", ")}`);
   console.log();
 
+  // Initialize clients (with fallback RPC support)
+  const fallbackRpcs = process.env.RPC_URLS_FALLBACK
+    ? process.env.RPC_URLS_FALLBACK.split(",").map((u) => u.trim()).filter(Boolean)
+    : [];
+  const allRpcs = [config.rpcUrl, ...fallbackRpcs];
+  const transport = allRpcs.length > 1
+    ? fallback(allRpcs.map((url) => http(url, { timeout: 20_000 })), { rank: true })
+    : http(config.rpcUrl, { timeout: 30_000 });
+
+  if (fallbackRpcs.length > 0) {
+    console.log(`[Config] RPC fallbacks: ${fallbackRpcs.length} backup(s)`);
+  }
+
   const publicClient = createPublicClient({
     chain: config.chain as Chain,
-    transport: http(config.rpcUrl),
+    transport,
   });
 
   const walletClient = createWalletClient({
     account,
     chain: config.chain as Chain,
-    transport: http(config.rpcUrl),
+    transport,
   });
 
   const pythAddress = PYTH_ADDRESS[config.chain.id];
@@ -292,9 +369,12 @@ async function main() {
       cycle++;
 
       try {
-        // 1. Fetch prices from Hermes
+        // 1. Fetch prices from Hermes (with retry)
         const feedIds = config.markets.map((m) => m.pythFeedId);
-        const { updateData, prices } = await fetchPythPriceUpdates(config.hermesUrl, feedIds);
+        const { updateData, prices } = await retryWithBackoff(
+          () => fetchPythPriceUpdates(config.hermesUrls, feedIds),
+          { maxRetries: 2, baseDelayMs: 500, label: "Hermes fetch" }
+        );
 
         // Log prices
         for (const m of config.markets) {
@@ -348,17 +428,23 @@ async function main() {
           continue;
         }
 
-        // 5. Submit tx
-        const hash = await walletClient.writeContract({
-          address: config.oracleRouterAddress,
-          abi: ORACLE_ROUTER_ABI,
-          functionName: "pushPriceBatchWithPyth",
-          args: [marketIds, updateData],
-          value: feeWithBuffer,
-        });
+        // 5. Submit tx (with retry)
+        const hash = await retryWithBackoff(
+          () => walletClient.writeContract({
+            address: config.oracleRouterAddress,
+            abi: ORACLE_ROUTER_ABI,
+            functionName: "pushPriceBatchWithPyth",
+            args: [marketIds, updateData],
+            value: feeWithBuffer,
+          }),
+          { maxRetries: 2, label: "price push tx" }
+        );
 
-        // 6. Wait for confirmation
-        const receipt = await publicClient.waitForTransactionReceipt({ hash });
+        // 6. Wait for confirmation (with timeout)
+        const receipt = await publicClient.waitForTransactionReceipt({
+          hash,
+          timeout: 30_000,
+        });
         const gasCost = receipt.gasUsed * (receipt.effectiveGasPrice || gasPrice);
 
         stats.totalPushes++;
@@ -405,6 +491,61 @@ async function main() {
   };
 
   pushLoop();
+
+  // ---- Health Check + Metrics Server ----
+  const healthPort = parseInt(process.env.HEALTH_PORT || "3011");
+  const healthServer = require("http").createServer((req: any, res: any) => {
+    const uptimeSec = Math.floor((Date.now() - stats.startedAt) / 1000);
+    const staleSec = stats.lastPushTime ? Math.floor((Date.now() - stats.lastPushTime) / 1000) : -1;
+
+    if (req.url === "/metrics") {
+      const lines = [
+        "# HELP sur_oracle_uptime_seconds Oracle keeper uptime",
+        "# TYPE sur_oracle_uptime_seconds gauge",
+        `sur_oracle_uptime_seconds ${uptimeSec}`,
+        "",
+        "# HELP sur_oracle_pushes_total Total price pushes",
+        "# TYPE sur_oracle_pushes_total counter",
+        `sur_oracle_pushes_total ${stats.totalPushes}`,
+        "",
+        "# HELP sur_oracle_pushes_failed_total Failed price pushes",
+        "# TYPE sur_oracle_pushes_failed_total counter",
+        `sur_oracle_pushes_failed_total ${stats.totalFailed}`,
+        "",
+        "# HELP sur_oracle_price_staleness_seconds Seconds since last successful push",
+        "# TYPE sur_oracle_price_staleness_seconds gauge",
+        `sur_oracle_price_staleness_seconds ${staleSec}`,
+        "",
+        "# HELP sur_oracle_gas_spent_eth Total gas + Pyth fees in ETH",
+        "# TYPE sur_oracle_gas_spent_eth counter",
+        `sur_oracle_gas_spent_eth ${Number(stats.totalGasSpent + stats.totalPythFees) / 1e18}`,
+        "",
+        ...[...stats.lastPrices.entries()].map(([name, price]) =>
+          `sur_oracle_price{market="${name}"} ${price}`
+        ),
+        "",
+      ];
+      res.writeHead(200, { "Content-Type": "text/plain; version=0.0.4" });
+      res.end(lines.join("\n"));
+      return;
+    }
+
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({
+      status: "ok",
+      service: "sur-oracle-keeper",
+      uptime: uptimeSec,
+      totalPushes: stats.totalPushes,
+      totalFailed: stats.totalFailed,
+      lastPushTime: stats.lastPushTime ? new Date(stats.lastPushTime).toISOString() : null,
+      priceStalenessSeconds: staleSec,
+      lastPrices: Object.fromEntries(stats.lastPrices),
+      gasSpent: formatEther(stats.totalGasSpent + stats.totalPythFees),
+    }));
+  });
+  healthServer.listen(healthPort, () => {
+    console.log(`[Health] http://localhost:${healthPort}/`);
+  });
 
   // Graceful shutdown
   const shutdown = () => {

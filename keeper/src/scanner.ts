@@ -24,6 +24,31 @@ import { ENGINE_ABI, LIQUIDATOR_ABI } from "./abis.js";
 import type { TrackedPosition, PositionTracker } from "./tracker.js";
 
 // ============================================================
+//                    RETRY WITH BACKOFF
+// ============================================================
+
+async function retryWithBackoff<T>(
+  fn: () => Promise<T>,
+  opts: { maxRetries?: number; baseDelayMs?: number; label?: string } = {}
+): Promise<T> {
+  const { maxRetries = 3, baseDelayMs = 1000, label = "operation" } = opts;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (attempt === maxRetries) throw err;
+      const delay = Math.min(baseDelayMs * Math.pow(2, attempt), 10_000);
+      console.warn(
+        `[Retry] ${label} failed (attempt ${attempt + 1}/${maxRetries + 1}), retrying in ${delay}ms: ${(err as Error).message?.slice(0, 80)}`
+      );
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+  throw new Error("unreachable");
+}
+
+// ============================================================
 //                    TYPES
 // ============================================================
 
@@ -234,7 +259,7 @@ export class LiquidationScanner {
           account: this.keeperAddress,
         });
 
-        const receipt = await this.client.waitForTransactionReceipt({ hash });
+        const receipt = await this.client.waitForTransactionReceipt({ hash, timeout: 60_000 });
         this.tracker.verifyPosition(marketId, trader);
         const gasUsed = receipt.gasUsed * (receipt.effectiveGasPrice || 0n);
 
@@ -261,7 +286,7 @@ export class LiquidationScanner {
         account: this.keeperAddress,
       });
 
-      const receipt = await this.client.waitForTransactionReceipt({ hash });
+      const receipt = await this.client.waitForTransactionReceipt({ hash, timeout: 60_000 });
       this.tracker.verifyPosition(marketId, trader);
       const gasUsed = receipt.gasUsed * (receipt.effectiveGasPrice || 0n);
 
@@ -309,7 +334,7 @@ export class LiquidationScanner {
         account: this.keeperAddress,
       });
 
-      const receipt = await this.client.waitForTransactionReceipt({ hash });
+      const receipt = await this.client.waitForTransactionReceipt({ hash, timeout: 60_000 });
       const gasUsed = receipt.gasUsed * (receipt.effectiveGasPrice || 0n);
       const gasPerLiq = gasUsed / BigInt(candidates.length);
 

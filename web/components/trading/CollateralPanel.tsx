@@ -15,7 +15,7 @@ const SUPPORTED_COLLATERALS = [
 
 export default function CollateralPanel() {
   return (
-    <div className="bg-[#1b1d28] border border-[#252836] rounded-lg p-4">
+    <div className="bg-[#1c1c20] border border-[#28282e] rounded-lg p-4">
       <div className="flex items-center justify-between mb-3">
         <h3 className="text-sm font-semibold text-gray-300 tracking-wider">YIELD COLLATERAL</h3>
         <span className="text-[8px] px-1.5 py-0.5 bg-yellow-500/15 text-yellow-500 rounded font-bold uppercase tracking-wider">
@@ -23,7 +23,7 @@ export default function CollateralPanel() {
         </span>
       </div>
 
-      <div className="p-3 bg-[#141518] rounded border border-[#252836]">
+      <div className="p-3 bg-[#161618] rounded border border-[#28282e]">
         <p className="text-[11px] text-gray-400 mb-3">
           Deposit yield-bearing tokens as margin collateral. Your tokens continue earning yield while locked as trading margin.
         </p>
@@ -31,7 +31,7 @@ export default function CollateralPanel() {
           {SUPPORTED_COLLATERALS.map(c => (
             <div key={c.symbol} className="flex items-center justify-between text-[10px] py-1">
               <div className="flex items-center gap-2">
-                <div className="w-5 h-5 rounded bg-[#252836] flex items-center justify-center text-[8px] text-gray-400 font-bold">
+                <div className="w-5 h-5 rounded bg-[#28282e] flex items-center justify-center text-[8px] text-gray-400 font-bold">
                   {c.icon.charAt(0).toUpperCase()}
                 </div>
                 <div>

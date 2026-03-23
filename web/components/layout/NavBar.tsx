@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { LanguageSelector } from "./LanguageSelector";
+import { ThemeToggle } from "@/components/ui/ThemeToggle";
 
 const NAV_ITEMS = [
   { label: "Trade", href: "/" },
@@ -30,6 +31,7 @@ const MORE_ITEMS = [
 export function NavBar() {
   const pathname = usePathname();
   const [moreOpen, setMoreOpen] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const moreRef = useRef<HTMLDivElement>(null);
 
   // Close dropdown on outside click
@@ -44,18 +46,35 @@ export function NavBar() {
   }, []);
 
   return (
-    <nav className="h-12 border-b border-sur-border bg-sur-surface flex items-center justify-between px-4 flex-shrink-0">
+    <nav aria-label="Main navigation" className="h-12 border-b border-sur-border bg-sur-surface flex items-center justify-between px-4 flex-shrink-0 relative">
       {/* Left: Logo + Nav links */}
       <div className="flex items-center gap-1">
+        {/* Hamburger (mobile only) */}
+        <button
+          onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+          aria-label={mobileMenuOpen ? "Close menu" : "Open menu"}
+          aria-expanded={mobileMenuOpen}
+          aria-controls="mobile-menu"
+          className="md:hidden p-2 -ml-2 mr-1 text-sur-muted hover:text-sur-text"
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+            {mobileMenuOpen ? (
+              <><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></>
+            ) : (
+              <><line x1="3" y1="6" x2="21" y2="6" /><line x1="3" y1="12" x2="21" y2="12" /><line x1="3" y1="18" x2="21" y2="18" /></>
+            )}
+          </svg>
+        </button>
+
         {/* Logo */}
-        <Link href="/" className="flex items-center gap-2 mr-6 hover:opacity-90 transition-opacity">
+        <Link href="/" className="flex items-center gap-2 md:mr-6 mr-2 hover:opacity-90 transition-opacity">
           <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-sur-accent to-blue-400 flex items-center justify-center">
             <span className="text-[12px] font-bold text-white">S</span>
           </div>
-          <span className="font-bold text-sm tracking-wide">SUR</span>
+          <span className="font-bold text-sm tracking-wide hidden sm:block">SUR</span>
         </Link>
 
-        {/* Primary nav */}
+        {/* Primary nav (hidden on mobile) */}
         {NAV_ITEMS.map((item) => {
           const isActive = item.href === "/"
             ? pathname === "/"
@@ -65,10 +84,10 @@ export function NavBar() {
             <Link
               key={item.href}
               href={item.href}
-              className={`px-3.5 py-2 text-[13px] font-medium rounded-md transition-colors ${
+              className={`hidden md:block px-3.5 py-2 text-[13px] font-medium rounded-md transition-colors ${
                 isActive
-                  ? "text-white bg-white/[0.06]"
-                  : "text-sur-muted hover:text-sur-text hover:bg-white/[0.03]"
+                  ? "text-sur-text bg-sur-border/40"
+                  : "text-sur-muted hover:text-sur-text hover:bg-sur-border/30"
               }`}
             >
               {item.label}
@@ -76,14 +95,17 @@ export function NavBar() {
           );
         })}
 
-        {/* More dropdown */}
-        <div ref={moreRef} className="relative">
+        {/* More dropdown (hidden on mobile — use hamburger instead) */}
+        <div ref={moreRef} className="relative hidden md:block">
           <button
             onClick={() => setMoreOpen(!moreOpen)}
+            aria-expanded={moreOpen}
+            aria-haspopup="true"
+            aria-controls="more-dropdown"
             className={`px-3.5 py-2 text-[13px] font-medium rounded-md transition-colors flex items-center gap-1.5 ${
               moreOpen
                 ? "text-white bg-white/[0.06]"
-                : "text-sur-muted hover:text-sur-text hover:bg-white/[0.03]"
+                : "text-sur-muted hover:text-sur-text hover:bg-sur-border/30"
             }`}
           >
             More
@@ -92,6 +114,7 @@ export function NavBar() {
               height="6"
               viewBox="0 0 10 6"
               fill="none"
+              aria-hidden="true"
               className={`transition-transform ${moreOpen ? "rotate-180" : ""}`}
             >
               <path d="M1 1L5 5L9 1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
@@ -99,7 +122,7 @@ export function NavBar() {
           </button>
 
           {moreOpen && (
-            <div className="absolute top-full left-0 mt-1.5 bg-sur-surface border border-sur-border rounded-lg shadow-2xl z-50 min-w-[220px] py-1.5 animate-fade-in">
+            <div id="more-dropdown" className="absolute top-full left-0 mt-1.5 bg-sur-surface border border-sur-border rounded-lg shadow-2xl z-50 min-w-[220px] py-1.5 animate-fade-in">
               {MORE_ITEMS.map((item) => (
                 <Link
                   key={item.label}
@@ -116,8 +139,44 @@ export function NavBar() {
         </div>
       </div>
 
-      {/* Right: Language + Wallet */}
+      {/* Mobile menu overlay */}
+      {mobileMenuOpen && (
+        <div id="mobile-menu" className="absolute top-full left-0 right-0 bg-sur-surface border-b border-sur-border z-50 md:hidden animate-fade-in max-h-[70vh] overflow-y-auto">
+          <div className="py-2">
+            {NAV_ITEMS.map((item) => {
+              const isActive = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  onClick={() => setMobileMenuOpen(false)}
+                  className={`block px-5 py-3 text-[13px] font-medium transition-colors ${
+                    isActive ? "text-sur-accent bg-sur-accent/5" : "text-sur-text hover:bg-white/[0.04]"
+                  }`}
+                >
+                  {item.label}
+                </Link>
+              );
+            })}
+            <div className="border-t border-sur-border my-1" />
+            {MORE_ITEMS.map((item) => (
+              <Link
+                key={item.label}
+                href={item.href}
+                onClick={() => setMobileMenuOpen(false)}
+                className="block px-5 py-2.5 hover:bg-white/[0.04] transition-colors"
+              >
+                <span className="text-[13px] font-medium text-sur-text">{item.label}</span>
+                <span className="text-[11px] text-sur-muted ml-2">{item.desc}</span>
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Right: Theme + Language + Wallet */}
       <div className="flex items-center gap-2">
+        <ThemeToggle />
         <LanguageSelector />
         <ConnectButton.Custom>
           {({ account, chain, openAccountModal, openChainModal, openConnectModal, mounted }) => {

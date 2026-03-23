@@ -29,6 +29,7 @@ import {
   createPublicClient,
   createWalletClient,
   http,
+  fallback,
   type Hex,
   type Chain,
   keccak256,
@@ -73,16 +74,42 @@ interface KeeperConfig {
 function loadConfig(): KeeperConfig {
   const isTestnet = process.env.NETWORK !== "mainnet";
 
+  // Validate private key
+  const pk = process.env.KEEPER_PRIVATE_KEY;
+  if (!pk || pk === "0x" || !/^0x[a-fA-F0-9]{64}$/.test(pk)) {
+    console.error("[Fatal] KEEPER_PRIVATE_KEY is missing or invalid.");
+    console.error("  → Must be a 32-byte hex string (0x + 64 hex chars).");
+    console.error("  → Set it in Railway env vars, NOT in .env files.");
+    process.exit(1);
+  }
+
+  // Validate required contract addresses
+  for (const [name, value] of Object.entries({
+    ENGINE_ADDRESS: process.env.ENGINE_ADDRESS,
+    LIQUIDATOR_ADDRESS: process.env.LIQUIDATOR_ADDRESS,
+  })) {
+    if (!value || value === "0x" || !/^0x[a-fA-F0-9]{40}$/.test(value)) {
+      console.error(`[Fatal] ${name} is missing or invalid (got: "${value || ""}")`);
+      process.exit(1);
+    }
+  }
+
+  // Validate RPC URL for mainnet
+  if (!isTestnet && !process.env.RPC_URL) {
+    console.error("[Fatal] RPC_URL is required for mainnet.");
+    process.exit(1);
+  }
+
   return {
     chain: isTestnet ? baseSepolia : base,
     rpcUrl: process.env.RPC_URL || "https://sepolia.base.org",
     rpcUrlWs: process.env.RPC_URL_WS,
 
-    engineAddress: (process.env.ENGINE_ADDRESS || "0x") as Hex,
-    liquidatorAddress: (process.env.LIQUIDATOR_ADDRESS || "0x") as Hex,
+    engineAddress: process.env.ENGINE_ADDRESS as Hex,
+    liquidatorAddress: process.env.LIQUIDATOR_ADDRESS as Hex,
     vaultAddress: (process.env.VAULT_ADDRESS || "0x") as Hex,
 
-    keeperPrivateKey: (process.env.KEEPER_PRIVATE_KEY || "0x") as Hex,
+    keeperPrivateKey: pk as Hex,
 
     scanIntervalMs: parseInt(process.env.SCAN_INTERVAL_MS || "5000"),
     syncFromBlock: BigInt(process.env.SYNC_FROM_BLOCK || "0"),
@@ -115,16 +142,28 @@ async function main() {
   console.log(`[Config] Markets:    ${config.marketNames.join(", ")}`);
   console.log();
 
-  // Initialize clients
+  // Initialize clients (with fallback RPC support)
+  const fallbackRpcs = process.env.RPC_URLS_FALLBACK
+    ? process.env.RPC_URLS_FALLBACK.split(",").map((u) => u.trim()).filter(Boolean)
+    : [];
+  const allRpcs = [config.rpcUrl, ...fallbackRpcs];
+  const transport = allRpcs.length > 1
+    ? fallback(allRpcs.map((url) => http(url, { timeout: 20_000 })), { rank: true })
+    : http(config.rpcUrl, { timeout: 30_000 });
+
+  if (fallbackRpcs.length > 0) {
+    console.log(`[Config] RPC fallbacks: ${fallbackRpcs.length} backup(s)`);
+  }
+
   const publicClient = createPublicClient({
     chain: config.chain as Chain,
-    transport: http(config.rpcUrl),
+    transport,
   });
 
   const walletClient = createWalletClient({
     account,
     chain: config.chain as Chain,
-    transport: http(config.rpcUrl),
+    transport,
   });
 
   // Check keeper balance
@@ -252,6 +291,63 @@ async function main() {
 
   // Start scanning
   scanLoop();
+
+  // ---- Health Check + Metrics Server ----
+  const healthPort = parseInt(process.env.HEALTH_PORT || "3010");
+  const healthServer = require("http").createServer((req: any, res: any) => {
+    const s = scanner.getStats();
+    const uptimeSec = Math.floor((Date.now() - s.startedAt) / 1000);
+
+    if (req.url === "/metrics") {
+      const lines = [
+        "# HELP sur_keeper_uptime_seconds Keeper uptime",
+        "# TYPE sur_keeper_uptime_seconds gauge",
+        `sur_keeper_uptime_seconds ${uptimeSec}`,
+        "",
+        "# HELP sur_keeper_scans_total Total scans performed",
+        "# TYPE sur_keeper_scans_total counter",
+        `sur_keeper_scans_total ${s.totalScans}`,
+        "",
+        "# HELP sur_keeper_liquidations_total Successful liquidations",
+        "# TYPE sur_keeper_liquidations_total counter",
+        `sur_keeper_liquidations_total ${s.totalLiquidations}`,
+        "",
+        "# HELP sur_keeper_liquidations_failed_total Failed liquidations",
+        "# TYPE sur_keeper_liquidations_failed_total counter",
+        `sur_keeper_liquidations_failed_total ${s.totalFailed}`,
+        "",
+        "# HELP sur_keeper_tracked_positions Currently tracked positions",
+        "# TYPE sur_keeper_tracked_positions gauge",
+        `sur_keeper_tracked_positions ${tracker.positionCount()}`,
+        "",
+        "# HELP sur_keeper_reward_usdc_total Total USDC rewards earned",
+        "# TYPE sur_keeper_reward_usdc_total counter",
+        `sur_keeper_reward_usdc_total ${Number(s.totalRewardEarned) / 1e6}`,
+        "",
+        "# HELP sur_keeper_gas_spent_eth Total gas spent in ETH",
+        "# TYPE sur_keeper_gas_spent_eth counter",
+        `sur_keeper_gas_spent_eth ${Number(s.totalGasSpent) / 1e18}`,
+        "",
+      ];
+      res.writeHead(200, { "Content-Type": "text/plain; version=0.0.4" });
+      res.end(lines.join("\n"));
+      return;
+    }
+
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({
+      status: "ok",
+      service: "sur-keeper",
+      uptime: uptimeSec,
+      scans: s.totalScans,
+      liquidations: s.totalLiquidations,
+      failed: s.totalFailed,
+      trackedPositions: tracker.positionCount(),
+    }));
+  });
+  healthServer.listen(healthPort, () => {
+    console.log(`[Health] http://localhost:${healthPort}/`);
+  });
 
   // ---- Graceful Shutdown ----
   const shutdown = () => {

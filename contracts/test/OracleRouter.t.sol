@@ -46,7 +46,7 @@ contract OracleRouterTest is Test {
         usdc = new MockUSDC();
         vault = new PerpVault(address(usdc), owner, 0);
         insurance = new InsuranceFund(address(vault), owner);
-        engine = new PerpEngine(address(vault), owner, feeRecipient, address(insurance));
+        engine = new PerpEngine(address(vault), owner, feeRecipient, address(insurance), feeRecipient);
 
         // Deploy mocks
         mockPyth = new MockPyth();
@@ -469,6 +469,9 @@ contract OracleRouterTest is Test {
         address newOwner = makeAddr("newOwner");
         vm.prank(owner);
         router.transferOwnership(newOwner);
+        assertEq(router.pendingOwner(), newOwner);
+        vm.prank(newOwner);
+        router.acceptOwnership();
         assertEq(router.owner(), newOwner);
     }
 }

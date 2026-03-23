@@ -165,13 +165,21 @@ function effectiveInterval(period: string, requestedInterval: string): string {
   const intervalMs = INTERVAL_MS[requestedInterval] || INTERVAL_MS["5m"];
   const estimatedCandles = periodMs / intervalMs;
 
-  // If more than 50,000 candles (~50 requests), switch to 1h
+  // If more than 15,000 candles (~15 requests), step up to 15m
+  // If more than 50,000 candles (~50 requests), step up to 1h
   if (estimatedCandles > 50_000) {
     console.log(
       `[Prices] Auto-switching interval from ${requestedInterval} to 1h ` +
       `(${Math.round(estimatedCandles)} candles would require ~${Math.ceil(estimatedCandles / 1000)} requests)`
     );
     return "1h";
+  }
+  if (estimatedCandles > 15_000 && requestedInterval === "5m") {
+    console.log(
+      `[Prices] Auto-switching interval from 5m to 15m ` +
+      `(${Math.round(estimatedCandles)} candles at 5m → ~${Math.round(estimatedCandles / 3)} at 15m)`
+    );
+    return "15m";
   }
   return requestedInterval;
 }

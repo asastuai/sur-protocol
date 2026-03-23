@@ -136,6 +136,7 @@ export type ClientMessage =
   | { type: "submitOrder"; order: SubmitOrderRequest }
   | { type: "cancelOrder"; orderId: string }
   | { type: "getAccountDetails"; trader: `0x${string}` }
+  | { type: "authenticate"; address: `0x${string}`; timestamp: string; signature: `0x${string}` }
   | { type: "ping" };
 
 export interface SubmitOrderRequest {
@@ -160,6 +161,7 @@ export type ServerMessage =
   | { type: "orderbook"; snapshot: OrderbookSnapshot }
   | { type: "orderbookUpdate"; marketId: `0x${string}`; bids: PriceLevel[]; asks: PriceLevel[] }
   | { type: "accountDetails"; details: AccountDetailsMessage }
+  | { type: "authenticated"; address: string }
   | { type: "pong" }
   | { type: "error"; message: string };
 

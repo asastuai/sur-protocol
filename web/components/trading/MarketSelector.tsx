@@ -68,21 +68,21 @@ export default function MarketSelector({ selectedMarket, onSelectMarket, isOpen,
   });
 
   return (
-    <div className="absolute top-12 left-0 z-50 w-80 bg-[#1b1d28] border border-[#252836] rounded-lg shadow-2xl overflow-hidden">
+    <div className="absolute top-12 left-0 z-50 w-80 bg-[#1c1c20] border border-[#28282e] rounded-lg shadow-2xl overflow-hidden">
       {/* Search */}
-      <div className="p-3 border-b border-[#252836]">
+      <div className="p-3 border-b border-[#28282e]">
         <input
           type="text"
           placeholder="Search markets..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="w-full bg-[#141518] border border-[#252836] rounded px-3 py-1.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-[#0052FF]"
+          className="w-full bg-[#161618] border border-[#28282e] rounded px-3 py-1.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-[#0052FF]"
           autoFocus
         />
       </div>
 
       {/* Tabs */}
-      <div className="flex border-b border-[#252836]">
+      <div className="flex border-b border-[#28282e]">
         {(["crypto", "favorites"] as Tab[]).map(t => (
           <button
             key={t}
@@ -107,7 +107,7 @@ export default function MarketSelector({ selectedMarket, onSelectMarket, isOpen,
           <button
             key={m.name}
             onClick={() => { onSelectMarket(m.name); onClose(); }}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 hover:bg-[#222538] transition-colors ${
+            className={`w-full flex items-center gap-3 px-3 py-2.5 hover:bg-[#242428] transition-colors ${
               selectedMarket === m.name ? "bg-[#0052FF]/10" : ""
             }`}
           >

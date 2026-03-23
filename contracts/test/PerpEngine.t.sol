@@ -37,12 +37,13 @@ contract PerpEngineTest is Test {
     function setUp() public {
         usdc = new MockUSDC();
         vault = new PerpVault(address(usdc), owner, 0);
-        engine = new PerpEngine(address(vault), owner, feeRecipient, insurance);
+        engine = new PerpEngine(address(vault), owner, feeRecipient, insurance, feeRecipient);
 
         vm.startPrank(owner);
         vault.setOperator(address(engine), true);
         engine.setOperator(operator, true);
         engine.setMaxExposureBps(0); // disable for non-exposure tests
+        engine.setOiSkewCap(10000);  // disable skew cap for tests
         vm.stopPrank();
 
         btcMarketId = keccak256(abi.encodePacked("BTC-USD"));
@@ -80,10 +81,10 @@ contract PerpEngineTest is Test {
 
     function test_constructor_revertsZeroAddress() public {
         vm.expectRevert(PerpEngine.ZeroAddress.selector);
-        new PerpEngine(address(0), owner, feeRecipient, insurance);
+        new PerpEngine(address(0), owner, feeRecipient, insurance, feeRecipient);
 
         vm.expectRevert(PerpEngine.ZeroAddress.selector);
-        new PerpEngine(address(vault), address(0), feeRecipient, insurance);
+        new PerpEngine(address(vault), address(0), feeRecipient, insurance, feeRecipient);
     }
 
     // ============================================================

@@ -34,6 +34,8 @@ contract PerpVault {
     error Reentrancy();
     error DepositCapExceeded(uint256 attempted, uint256 cap);
     error WithdrawalTooLarge(uint256 requested, uint256 maxWithdrawal);
+    error OperatorTransferTooLarge(uint256 requested, uint256 maxAllowed);
+    error ArrayLengthMismatch();
 
     // ============================================================
     //                          EVENTS
@@ -90,8 +92,8 @@ contract PerpVault {
     /// @notice Whether the vault is paused
     bool public paused;
 
-    /// @notice Reentrancy lock
-    uint256 private _locked = 1;
+    /// @notice Reentrancy lock (uses transient storage EIP-1153 on Cancun-compatible chains)
+    // G-19: Transient storage saves ~4800 gas per reentrancy check vs SSTORE
 
     /// @notice Maximum total deposits allowed (0 = unlimited)
     /// @dev Safety cap for gradual launch. Set to 0 to remove cap.
@@ -101,14 +103,22 @@ contract PerpVault {
     /// @dev Safety limit to slow down potential exploits
     uint256 public maxWithdrawalPerTx;
 
+    /// @notice M-14 fix: Maximum operator transfer per transaction (0 = unlimited)
+    uint256 public maxOperatorTransferPerTx;
+
     /// @notice Total USDC deposited across all accounts
     uint256 public totalDeposits;
 
     /// @notice Total collateral credits (from yield-bearing deposits via CollateralManager)
     uint256 public totalCollateralCredits;
 
-    /// @notice USDC balance per account
+    /// @notice USDC deposit balance per account (withdrawable)
     mapping(address => uint256) public balances;
+
+    /// @notice Collateral credit balance per account (C-5 fix: NOT withdrawable)
+    /// @dev Backed by yield-bearing tokens in CollateralManager, not real USDC.
+    ///      Usable for trading margin but cannot be withdrawn as USDC.
+    mapping(address => uint256) public collateralBalances;
 
     /// @notice Approved operators (settlement contracts)
     mapping(address => bool) public operators;
@@ -133,10 +143,12 @@ contract PerpVault {
     }
 
     modifier nonReentrant() {
-        if (_locked == 2) revert Reentrancy();
-        _locked = 2;
+        assembly {
+            if tload(0) { revert(0, 0) }
+            tstore(0, 1)
+        }
         _;
-        _locked = 1;
+        assembly { tstore(0, 0) }
     }
 
     // ============================================================
@@ -176,15 +188,21 @@ contract PerpVault {
             revert DepositCapExceeded(totalDeposits + amount, depositCap);
         }
 
+        // M-13 fix: Record balance before transfer to verify actual amount received
+        uint256 balBefore = usdc.balanceOf(address(this));
+
         // Transfer USDC from user to vault
         bool success = usdc.transferFrom(msg.sender, address(this), amount);
         if (!success) revert TransferFailed();
 
-        // Update state
-        balances[msg.sender] += amount;
-        totalDeposits += amount;
+        // M-13 fix: Verify actual received amount (guards against fee-on-transfer tokens)
+        uint256 received = usdc.balanceOf(address(this)) - balBefore;
 
-        emit Deposit(msg.sender, amount, balances[msg.sender]);
+        // Update state with actual received amount
+        balances[msg.sender] += received;
+        totalDeposits += received;
+
+        emit Deposit(msg.sender, received, balances[msg.sender]);
     }
 
     /// @notice Withdraw USDC from the vault
@@ -214,10 +232,17 @@ contract PerpVault {
         emit Withdraw(msg.sender, amount, balances[msg.sender]);
     }
 
-    /// @notice Get the available balance for an account
+    /// @notice Get the total effective balance for an account (deposit + collateral)
     /// @param account The account to query
-    /// @return The available USDC balance
+    /// @return The total balance usable for trading
     function balanceOf(address account) external view returns (uint256) {
+        return balances[account] + collateralBalances[account];
+    }
+
+    /// @notice Get only the withdrawable deposit balance (excludes collateral credits)
+    /// @param account The account to query
+    /// @return The USDC deposit balance that can be withdrawn
+    function withdrawableBalance(address account) external view returns (uint256) {
         return balances[account];
     }
 
@@ -231,21 +256,49 @@ contract PerpVault {
     /// @param amount Amount of USDC to transfer internally
     /// @dev Only callable by approved operators (settlement contracts).
     ///      No actual USDC movement - just balance accounting within the vault.
+    /// @dev C-5 fix: Uses combined balance (deposit + collateral) for trading.
+    ///      Deducts from deposit balance first, then collateral balance.
     function internalTransfer(address from, address to, uint256 amount)
         external
         onlyOperator
         whenNotPaused
+        nonReentrant
     {
         if (amount == 0) revert ZeroAmount();
         if (from == address(0) || to == address(0)) revert ZeroAddress();
 
-        uint256 fromBal = balances[from];
-        if (amount > fromBal) {
-            revert InsufficientBalance(amount, fromBal);
+        // M-14 fix: Cap operator transfer size
+        if (maxOperatorTransferPerTx > 0 && amount > maxOperatorTransferPerTx) {
+            revert OperatorTransferTooLarge(amount, maxOperatorTransferPerTx);
         }
 
-        balances[from] = fromBal - amount;
-        balances[to] += amount;
+        uint256 depositBal = balances[from];
+        uint256 colBal = collateralBalances[from];
+        uint256 totalBal = depositBal + colBal;
+
+        if (amount > totalBal) {
+            revert InsufficientBalance(amount, totalBal);
+        }
+
+        // Deduct from deposit balance first, overflow goes to collateral
+        uint256 fromDeposit;
+        uint256 fromCollateral;
+        if (amount <= depositBal) {
+            fromDeposit = amount;
+            balances[from] = depositBal - amount;
+        } else {
+            fromDeposit = depositBal;
+            fromCollateral = amount - depositBal;
+            balances[from] = 0;
+            collateralBalances[from] = colBal - fromCollateral;
+        }
+
+        // Credit: deposit portion → deposit balance, collateral portion → collateral balance
+        // This prevents collateral credits from becoming withdrawable USDC
+        balances[to] += fromDeposit;
+        if (fromCollateral > 0) {
+            collateralBalances[to] += fromCollateral;
+        }
 
         emit InternalTransfer(from, to, amount, msg.sender);
     }
@@ -255,13 +308,17 @@ contract PerpVault {
     /// @param tos Array of accounts to credit
     /// @param amounts Array of amounts to transfer
     /// @dev Arrays must have equal length. Reverts entirely if any single transfer fails.
+    /// @dev C-5 fix: Uses combined balance (deposit + collateral) for trading
     function batchInternalTransfer(
         address[] calldata froms,
         address[] calldata tos,
         uint256[] calldata amounts
-    ) external onlyOperator whenNotPaused {
+    ) external onlyOperator whenNotPaused nonReentrant {
         uint256 len = froms.length;
-        require(len == tos.length && len == amounts.length, "Array length mismatch");
+        if (len != tos.length || len != amounts.length) revert ArrayLengthMismatch();
+
+        // G-20: Cache storage read outside loop
+        uint256 _maxOpTransfer = maxOperatorTransferPerTx;
 
         for (uint256 i = 0; i < len;) {
             uint256 amount = amounts[i];
@@ -270,14 +327,34 @@ contract PerpVault {
 
             if (amount == 0) revert ZeroAmount();
             if (from == address(0) || to == address(0)) revert ZeroAddress();
-
-            uint256 fromBal = balances[from];
-            if (amount > fromBal) {
-                revert InsufficientBalance(amount, fromBal);
+            if (_maxOpTransfer > 0 && amount > _maxOpTransfer) {
+                revert OperatorTransferTooLarge(amount, _maxOpTransfer);
             }
 
-            balances[from] = fromBal - amount;
-            balances[to] += amount;
+            uint256 depositBal = balances[from];
+            uint256 colBal = collateralBalances[from];
+            uint256 totalBal = depositBal + colBal;
+
+            if (amount > totalBal) {
+                revert InsufficientBalance(amount, totalBal);
+            }
+
+            uint256 fromDep;
+            uint256 fromCol;
+            if (amount <= depositBal) {
+                fromDep = amount;
+                balances[from] = depositBal - amount;
+            } else {
+                fromDep = depositBal;
+                fromCol = amount - depositBal;
+                balances[from] = 0;
+                collateralBalances[from] = colBal - fromCol;
+            }
+
+            balances[to] += fromDep;
+            if (fromCol > 0) {
+                collateralBalances[to] += fromCol;
+            }
 
             emit InternalTransfer(from, to, amount, msg.sender);
 
@@ -295,13 +372,14 @@ contract PerpVault {
     /// @notice Credit USDC-equivalent balance for yield-bearing collateral deposits
     /// @dev Only callable by operators (CollateralManager). No actual USDC transfer —
     ///      the collateral backing lives in CollateralManager.
+    /// @dev C-5 fix: Credits go to collateralBalances (not withdrawable as USDC)
     function creditCollateral(address trader, uint256 usdcAmount)
         external onlyOperator whenNotPaused
     {
         if (usdcAmount == 0) revert ZeroAmount();
         if (trader == address(0)) revert ZeroAddress();
 
-        balances[trader] += usdcAmount;
+        collateralBalances[trader] += usdcAmount;
         totalCollateralCredits += usdcAmount;
 
         emit CollateralCredited(trader, usdcAmount);
@@ -309,17 +387,18 @@ contract PerpVault {
 
     /// @notice Debit USDC-equivalent balance when withdrawing yield-bearing collateral
     /// @dev Only callable by operators (CollateralManager).
+    /// @dev C-5 fix: Debits come from collateralBalances (separate from deposit balance)
     function debitCollateral(address trader, uint256 usdcAmount)
         external onlyOperator whenNotPaused
     {
         if (usdcAmount == 0) revert ZeroAmount();
 
-        uint256 bal = balances[trader];
-        if (usdcAmount > bal) {
-            revert InsufficientBalance(usdcAmount, bal);
+        uint256 colBal = collateralBalances[trader];
+        if (usdcAmount > colBal) {
+            revert InsufficientBalance(usdcAmount, colBal);
         }
 
-        balances[trader] = bal - usdcAmount;
+        collateralBalances[trader] = colBal - usdcAmount;
         totalCollateralCredits -= usdcAmount;
 
         emit CollateralDebited(trader, usdcAmount);
@@ -366,6 +445,14 @@ contract PerpVault {
         uint256 oldMax = maxWithdrawalPerTx;
         maxWithdrawalPerTx = newMax;
         emit MaxWithdrawalUpdated(oldMax, newMax);
+    }
+
+    /// @notice M-14 fix: Set max operator transfer per tx (0 = unlimited)
+    event MaxOperatorTransferUpdated(uint256 oldMax, uint256 newMax);
+    function setMaxOperatorTransferPerTx(uint256 newMax) external onlyOwner {
+        uint256 oldMax = maxOperatorTransferPerTx;
+        maxOperatorTransferPerTx = newMax;
+        emit MaxOperatorTransferUpdated(oldMax, newMax);
     }
 
     /// @notice Start ownership transfer (two-step)

@@ -425,7 +425,7 @@ export default function CopyTradePage() {
         </div>
 
         {/* Summary stats */}
-        <div className="grid grid-cols-3 gap-4 mb-8">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
           <div className="bg-sur-surface border border-sur-border rounded-xl p-4">
             <div className="flex items-center gap-2 mb-2">
               <div className="w-8 h-8 rounded-lg bg-sur-accent/10 flex items-center justify-center text-sur-accent">

@@ -11,11 +11,11 @@ export default function VaultPanel() {
   const [tab, setTab] = useState<"browse" | "my">("browse");
 
   return (
-    <div className="h-full flex flex-col bg-[#141518]">
+    <div className="h-full flex flex-col bg-[#161618]">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-[#252836]">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-[#28282e]">
         <h2 className="text-sm font-semibold text-white tracking-wider">VAULTS</h2>
-        <div className="flex bg-[#1b1d28] rounded p-0.5">
+        <div className="flex bg-[#1c1c20] rounded p-0.5">
           {(["browse", "my"] as const).map(t => (
             <button
               key={t}
@@ -47,7 +47,7 @@ export default function VaultPanel() {
         ) : (
           <div className="space-y-3">
             {/* SUR Protocol Vault */}
-            <div className="border border-[#0052FF]/30 rounded-lg bg-[#1b1d28]">
+            <div className="border border-[#0052FF]/30 rounded-lg bg-[#1c1c20]">
               <div className="p-3">
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-2">
@@ -89,7 +89,7 @@ export default function VaultPanel() {
             </div>
 
             {/* Empty strategy vaults */}
-            <div className="flex flex-col items-center justify-center py-8 border border-dashed border-[#252836] rounded-lg text-center">
+            <div className="flex flex-col items-center justify-center py-8 border border-dashed border-[#28282e] rounded-lg text-center">
               <div className="w-8 h-8 rounded-lg bg-white/[0.04] flex items-center justify-center mb-2">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-gray-500">
                   <path d="M12 2v20M2 12h20" strokeLinecap="round"/>

@@ -32,7 +32,7 @@ contract InvariantTest is StdInvariant, Test {
         usdc = new MockUSDC();
         vault = new PerpVault(address(usdc), owner, 0); // unlimited
         insurance = new InsuranceFund(address(vault), owner);
-        engine = new PerpEngine(address(vault), owner, feeRecipient, address(insurance));
+        engine = new PerpEngine(address(vault), owner, feeRecipient, address(insurance), feeRecipient);
 
         btcMarket = keccak256(abi.encodePacked("BTC-USD"));
 

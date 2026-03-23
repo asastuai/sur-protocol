@@ -15,7 +15,7 @@ export function Header() {
 
   // Show "Live" when we have a real price (from Binance), regardless of SUR WS status
   const hasRealPrice = state.markPrice > 0;
-  const wsColor = hasRealPrice ? "#0ECB81" : state.wsStatus === "connecting" ? "#ffb224" : "#F6465D";
+  const wsColor = hasRealPrice ? "#3fb950" : state.wsStatus === "connecting" ? "#e3b341" : "#f85149";
   const wsLabel = hasRealPrice ? "Live" : state.wsStatus === "connecting" ? "Connecting..." : "Offline";
 
   // Close dropdown on outside click

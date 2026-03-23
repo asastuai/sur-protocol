@@ -118,17 +118,22 @@ export interface PaperPosition {
   sl?: number;  // stop loss price
 }
 
+export type PaperOrderType = "limit" | "stopMarket" | "stopLimit";
+
 export interface PaperLimitOrder {
   id: string;
   market: string;
   marketId: Hex;
   side: "buy" | "sell";
-  price: number;
+  orderType: PaperOrderType;
+  price: number;       // limit price (0 for stopMarket)
+  stopPrice?: number;  // trigger price for stop orders
   size: number;
   leverage: number;
   createdAt: number;
   tp?: number;
   sl?: number;
+  ocoGroupId?: string; // OCO: when this fills/cancels, cancel all with same group
 }
 
 export interface PaperTradeEntry {
@@ -196,9 +201,10 @@ export type TradingAction =
   | { type: "SET_MARKET_STATS"; volume24h?: number; openInterest?: number; fundingRate?: number; change24h?: number }
   // Paper trading actions
   | { type: "PAPER_MARKET_ORDER"; market: string; marketId: Hex; side: "buy" | "sell"; size: number; leverage: number; fillPrice: number; feeBps: number; tp?: number; sl?: number }
-  | { type: "PAPER_LIMIT_ORDER"; market: string; marketId: Hex; side: "buy" | "sell"; price: number; size: number; leverage: number; tp?: number; sl?: number }
+  | { type: "PAPER_LIMIT_ORDER"; market: string; marketId: Hex; side: "buy" | "sell"; price: number; size: number; leverage: number; tp?: number; sl?: number; orderType?: PaperOrderType; stopPrice?: number; ocoGroupId?: string }
   | { type: "PAPER_CLOSE_POSITION"; positionId: string; closePrice: number; feeBps: number }
   | { type: "PAPER_CANCEL_ORDER"; orderId: string }
+  | { type: "PAPER_UPDATE_TPSL"; positionId: string; tp?: number | null; sl?: number | null }
   | { type: "PAPER_FILL_LIMIT"; orderId: string; fillPrice: number; feeBps: number }
   | { type: "PAPER_DEPOSIT"; amount: number }
   | { type: "PAPER_WITHDRAW"; amount: number }
@@ -415,8 +421,10 @@ export function tradingReducer(state: TradingState, action: TradingAction): Trad
     }
 
     case "PAPER_LIMIT_ORDER": {
-      const { market, marketId, side, price, size, leverage, tp, sl } = action;
-      const notional = price * size;
+      const { market, marketId, side, price, size, leverage, tp, sl, orderType: ot, stopPrice, ocoGroupId } = action;
+      const orderType = ot || "limit";
+      const priceForMargin = orderType === "stopMarket" ? (stopPrice || price) : price;
+      const notional = priceForMargin * size;
       const margin = notional / leverage;
       if (margin > state.paperBalance) return state;
 
@@ -425,10 +433,12 @@ export function tradingReducer(state: TradingState, action: TradingAction): Trad
         paperBalance: state.paperBalance - margin,
         paperOrders: [...state.paperOrders, {
           id: `plimit_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
-          market, marketId, side, price, size, leverage,
+          market, marketId, side, orderType, price, size, leverage,
           createdAt: Date.now(),
+          ...(stopPrice ? { stopPrice } : {}),
           ...(tp ? { tp } : {}),
           ...(sl ? { sl } : {}),
+          ...(ocoGroupId ? { ocoGroupId } : {}),
         }],
         lastOrderStatus: "open",
         orderError: null,
@@ -465,11 +475,35 @@ export function tradingReducer(state: TradingState, action: TradingAction): Trad
     case "PAPER_CANCEL_ORDER": {
       const order = state.paperOrders.find(o => o.id === action.orderId);
       if (!order) return state;
-      const margin = (order.price * order.size) / order.leverage;
+      // Find all orders to cancel (this one + OCO siblings)
+      const toCancel = order.ocoGroupId
+        ? state.paperOrders.filter(o => o.id === order.id || o.ocoGroupId === order.ocoGroupId)
+        : [order];
+      const cancelIds = new Set(toCancel.map(o => o.id));
+      const returnedMargin = toCancel.reduce((s, o) => {
+        const p = o.orderType === "stopMarket" ? (o.stopPrice || o.price) : o.price;
+        return s + (p * o.size) / o.leverage;
+      }, 0);
       return {
         ...state,
-        paperBalance: state.paperBalance + margin,
-        paperOrders: state.paperOrders.filter(o => o.id !== action.orderId),
+        paperBalance: state.paperBalance + returnedMargin,
+        paperOrders: state.paperOrders.filter(o => !cancelIds.has(o.id)),
+      };
+    }
+
+    case "PAPER_UPDATE_TPSL": {
+      const { positionId, tp, sl } = action;
+      return {
+        ...state,
+        paperPositions: state.paperPositions.map(p =>
+          p.id === positionId
+            ? {
+                ...p,
+                ...(tp !== undefined ? { tp: tp === null ? undefined : tp } : {}),
+                ...(sl !== undefined ? { sl: sl === null ? undefined : sl } : {}),
+              }
+            : p
+        ),
       };
     }
 
@@ -478,12 +512,21 @@ export function tradingReducer(state: TradingState, action: TradingAction): Trad
       const order = state.paperOrders.find(o => o.id === orderId);
       if (!order) return state;
 
-      // Remove from orders, then process as market order
+      // Cancel OCO siblings + remove this order
+      const ocoSiblings = order.ocoGroupId
+        ? state.paperOrders.filter(o => o.id !== order.id && o.ocoGroupId === order.ocoGroupId)
+        : [];
+      const cancelIds = new Set([order.id, ...ocoSiblings.map(o => o.id)]);
+      const siblingMargin = ocoSiblings.reduce((s, o) => {
+        const p = o.orderType === "stopMarket" ? (o.stopPrice || o.price) : o.price;
+        return s + (p * o.size) / o.leverage;
+      }, 0);
+      const orderMarginPrice = order.orderType === "stopMarket" ? (order.stopPrice || order.price) : order.price;
+
       const stateWithoutOrder = {
         ...state,
-        paperOrders: state.paperOrders.filter(o => o.id !== orderId),
-        // Return margin that was reserved
-        paperBalance: state.paperBalance + (order.price * order.size) / order.leverage,
+        paperOrders: state.paperOrders.filter(o => !cancelIds.has(o.id)),
+        paperBalance: state.paperBalance + (orderMarginPrice * order.size) / order.leverage + siblingMargin,
       };
 
       return tradingReducer(stateWithoutOrder, {

@@ -52,13 +52,13 @@ export default function AccountPanel() {
           <Row
             label="Unrealized PnL"
             value={fmt(totalUnrealizedPnl)}
-            color={totalUnrealizedPnl >= 0 ? "#0ECB81" : "#F6465D"}
+            color={totalUnrealizedPnl >= 0 ? "#3fb950" : "#f85149"}
           />
           <Row label="Margin Used" value={fmt(totalMarginUsed)} />
           <Row
             label="Realized PnL"
             value={fmt(state.paperTotalRealizedPnl)}
-            color={state.paperTotalRealizedPnl >= 0 ? "#0ECB81" : "#F6465D"}
+            color={state.paperTotalRealizedPnl >= 0 ? "#3fb950" : "#f85149"}
           />
           {state.paperPositions.length > 0 && (
             <Row label="Positions" value={String(state.paperPositions.length)} />

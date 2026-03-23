@@ -1,0 +1,341 @@
+# SUR Protocol - Prometheus Alerting Rules
+# Severity labels: P0 = immediate pager, P1 = urgent, P2 = warning
+
+groups:
+  # ==========================================================
+  #  P0 — CRITICAL: Protocol-breaking, immediate response
+  # ==========================================================
+  - name: sur_critical
+    interval: 10s
+    rules:
+      # Oracle price staleness > 30s freezes the protocol
+      - alert: OraclePriceStaleCritical
+        expr: sur_oracle_price_staleness_seconds > 30
+        for: 15s
+        labels:
+          severity: P0
+          service: oracle
+        annotations:
+          summary: "Oracle price stale for {{ $value }}s (limit: 30s)"
+          description: >
+            Oracle price staleness is {{ $value }}s, exceeding the 30s threshold.
+            The protocol cannot process trades or liquidations with stale prices.
+            Immediate action required — check oracle keeper process and RPC connectivity.
+
+      # Any service completely down
+      - alert: ServiceDown
+        expr: up == 0
+        for: 30s
+        labels:
+          severity: P0
+        annotations:
+          summary: "{{ $labels.job }} is DOWN"
+          description: >
+            Service {{ $labels.job }} ({{ $labels.instance }}) has been
+            unreachable for 30 seconds. Health check endpoint is not responding.
+
+      # Settlement pipeline broken
+      - alert: SettlementFailuresCritical
+        expr: increase(sur_api_settlement_failed_total[5m]) > 3
+        for: 0s
+        labels:
+          severity: P0
+          service: api
+        annotations:
+          summary: "{{ $value }} settlement failures in 5 min"
+          description: >
+            More than 3 settlement batches failed in the last 5 minutes.
+            User funds may be stuck. Check settlement contract gas, nonce,
+            and chain congestion.
+
+      # Engine circuit breaker tripped — liquidations halted
+      - alert: EngineCircuitBreakerActive
+        expr: sur_engine_circuit_breaker_active == 1
+        for: 0s
+        labels:
+          severity: P0
+          service: engine
+        annotations:
+          summary: "PerpEngine circuit breaker ACTIVE — liquidations halted"
+          description: >
+            The PerpEngine circuit breaker has been triggered due to excessive
+            liquidation volume in the time window. All liquidations are frozen
+            until cooldown expires or manual reset. Check for cascade events.
+
+      # Oracle circuit breaker tripped — price feeds frozen
+      - alert: OracleCircuitBreakerActive
+        expr: sur_oracle_circuit_breaker_active == 1
+        for: 0s
+        labels:
+          severity: P0
+          service: oracle
+        annotations:
+          summary: "Oracle circuit breaker ACTIVE — price feeds frozen"
+          description: >
+            The OracleRouter circuit breaker has been triggered due to abnormal
+            price movement exceeding maxPriceChangeBps. All price updates are
+            rejected. Requires consecutive good prices or manual reset.
+
+      # Any core contract paused
+      - alert: ContractPaused
+        expr: >
+          sur_contract_paused{contract="settlement"} == 1
+          or sur_contract_paused{contract="liquidator"} == 1
+        for: 0s
+        labels:
+          severity: P0
+        annotations:
+          summary: "{{ $labels.contract }} contract is PAUSED"
+          description: >
+            The {{ $labels.contract }} contract has been paused. This blocks
+            critical protocol operations. Verify this was intentional (guardian
+            emergency action) or investigate immediately.
+
+  # ==========================================================
+  #  P1 — URGENT: Degraded operations, respond within minutes
+  # ==========================================================
+  - name: sur_urgent
+    interval: 15s
+    rules:
+      # Liquidation failures spike
+      - alert: LiquidationFailuresHigh
+        expr: increase(sur_keeper_liquidations_failed_total[5m]) > 5
+        for: 0s
+        labels:
+          severity: P1
+          service: keeper
+        annotations:
+          summary: "{{ $value }} liquidation failures in 5 min"
+          description: >
+            The keeper has failed {{ $value }} liquidation attempts in the
+            last 5 minutes. Underwater positions may accumulate, risking
+            socialized losses. Check keeper gas balance, RPC, and contract state.
+
+      # WebSocket connections approaching limit
+      - alert: WSConnectionsNearLimit
+        expr: sur_api_ws_connections > 180
+        for: 1m
+        labels:
+          severity: P1
+          service: api
+        annotations:
+          summary: "WS connections at {{ $value }}/200"
+          description: >
+            WebSocket connection count is {{ $value }}, approaching the 200
+            hard limit. New traders will be rejected. Consider scaling or
+            investigating connection leaks.
+
+      # Keeper gas burn rate high
+      - alert: KeeperGasBurnRateHigh
+        expr: increase(sur_keeper_gas_spent_eth[1h]) > 0.05
+        for: 5m
+        labels:
+          severity: P1
+          service: keeper
+        annotations:
+          summary: "Keeper gas burn > 0.05 ETH/hr"
+          description: >
+            Keeper gas burn rate is abnormally high. Verify that the keeper
+            wallet has sufficient ETH balance and check for liquidation loops.
+
+      # Oracle gas burn rate high
+      - alert: OracleGasBurnRateHigh
+        expr: increase(sur_oracle_gas_spent_eth[1h]) > 0.05
+        for: 5m
+        labels:
+          severity: P1
+          service: oracle
+        annotations:
+          summary: "Oracle keeper gas burn > 0.05 ETH/hr"
+          description: >
+            Oracle keeper gas burn rate is abnormally high. Check for
+            repeated failed pushes or gas price spikes on L2.
+
+      # Oracle push failures
+      - alert: OraclePushFailuresHigh
+        expr: increase(sur_oracle_pushes_failed_total[5m]) > 3
+        for: 0s
+        labels:
+          severity: P1
+          service: oracle
+        annotations:
+          summary: "{{ $value }} oracle push failures in 5 min"
+          description: >
+            Oracle keeper is failing to push prices on-chain. This will
+            lead to price staleness and eventual protocol freeze.
+
+      # Circuit breaker cooldown approaching expiry
+      - alert: EngineCircuitBreakerCooldown
+        expr: sur_engine_circuit_breaker_cooldown_remaining_seconds > 0 and sur_engine_circuit_breaker_cooldown_remaining_seconds < 60
+        for: 0s
+        labels:
+          severity: P1
+          service: engine
+        annotations:
+          summary: "Engine circuit breaker cooldown expires in {{ $value }}s"
+          description: >
+            The engine circuit breaker cooldown is about to expire. Liquidations
+            will resume automatically. Monitor for re-triggering.
+
+      # Pending ownership transfer detected
+      - alert: OwnershipTransferPending
+        expr: sur_ownership_pending_transfer == 1
+        for: 5m
+        labels:
+          severity: P1
+        annotations:
+          summary: "Ownership transfer pending on {{ $labels.contract }}"
+          description: >
+            A 2-step ownership transfer is in progress on {{ $labels.contract }}.
+            pendingOwner has been set but acceptOwnership() has not been called.
+            Verify this is expected (Timelock queued operation).
+
+      # Insurance fund coverage dropping fast
+      - alert: InsuranceCoverageDroppingFast
+        expr: delta(sur_insurance_coverage_ratio[15m]) < -0.5
+        for: 0s
+        labels:
+          severity: P1
+          service: insurance
+        annotations:
+          summary: "Insurance coverage ratio dropped > 0.5% in 15 min"
+          description: >
+            Insurance fund coverage ratio is declining rapidly. This may indicate
+            a wave of bad debt from liquidations. Check liquidation keeper logs.
+
+      # Oracle price deviation — BTC/ETH ratio sanity check
+      - alert: OraclePriceDeviationAnomaly
+        expr: >
+          abs(
+            (sur_oracle_price{market="BTC-USD"} / ignoring(market) sur_oracle_price{market="ETH-USD"})
+            - 15
+          ) / 15 > 0.30
+        for: 2m
+        labels:
+          severity: P1
+          service: oracle
+        annotations:
+          summary: "BTC/ETH price ratio deviating > 30% from expected"
+          description: >
+            The BTC-to-ETH price ratio has diverged significantly from the
+            historical ~15x baseline. This may indicate a corrupted price
+            feed or oracle manipulation attempt.
+
+  # ==========================================================
+  #  P2 — WARNING: Operational awareness
+  # ==========================================================
+  - name: sur_warning
+    interval: 30s
+    rules:
+      # Oracle staleness early warning (> 15s but < 30s)
+      - alert: OraclePriceStaleWarning
+        expr: sur_oracle_price_staleness_seconds > 15 and sur_oracle_price_staleness_seconds <= 30
+        for: 30s
+        labels:
+          severity: P2
+          service: oracle
+        annotations:
+          summary: "Oracle staleness {{ $value }}s — approaching 30s limit"
+
+      # WS connections moderate
+      - alert: WSConnectionsModerate
+        expr: sur_api_ws_connections > 150 and sur_api_ws_connections <= 180
+        for: 5m
+        labels:
+          severity: P2
+          service: api
+        annotations:
+          summary: "WS connections at {{ $value }}/200"
+
+      # Gas spend anomaly — any service
+      - alert: GasSpendRateAnomaly
+        expr: >
+          increase(sur_keeper_gas_spent_eth[1h]) > 0.03
+          or increase(sur_oracle_gas_spent_eth[1h]) > 0.03
+        for: 0s
+        labels:
+          severity: P2
+        annotations:
+          summary: "Gas spend elevated (> 0.03 ETH in last hour)"
+
+      # Funding application failures
+      - alert: FundingApplicationFailures
+        expr: increase(sur_funding_applications_failed_total[15m]) > 2
+        for: 0s
+        labels:
+          severity: P2
+          service: funding
+        annotations:
+          summary: "{{ $value }} funding application failures in 15 min"
+
+      # OI imbalance warning (long/short skew > 3:1)
+      - alert: OIImbalanceHigh
+        expr: >
+          (sur_funding_oi_long > 0 and sur_funding_oi_short > 0)
+          and (
+            (sur_funding_oi_long / sur_funding_oi_short > 3)
+            or (sur_funding_oi_short / sur_funding_oi_long > 3)
+          )
+        for: 10m
+        labels:
+          severity: P2
+          service: funding
+        annotations:
+          summary: "OI imbalance > 3:1 on {{ $labels.market }}"
+          description: >
+            Long/short open interest ratio exceeds 3:1 on {{ $labels.market }}.
+            Funding rates should be correcting this. Verify the funding bot.
+
+      # Service uptime resets (restart detected)
+      - alert: ServiceRestarted
+        expr: >
+          resets(sur_api_uptime_seconds[15m]) > 0
+          or resets(sur_keeper_uptime_seconds[15m]) > 0
+          or resets(sur_oracle_uptime_seconds[15m]) > 0
+          or resets(sur_funding_uptime_seconds[15m]) > 0
+        for: 0s
+        labels:
+          severity: P2
+        annotations:
+          summary: "SUR service restart detected in last 15 min"
+
+      # Circuit breaker recovered
+      - alert: CircuitBreakerRecovered
+        expr: >
+          delta(sur_engine_circuit_breaker_active[5m]) < 0
+          or delta(sur_oracle_circuit_breaker_active[5m]) < 0
+        for: 0s
+        labels:
+          severity: P2
+        annotations:
+          summary: "Circuit breaker deactivated — normal operations resumed"
+          description: >
+            A circuit breaker that was previously active has been reset.
+            Monitor closely for re-triggering in the next few minutes.
+
+      # Liquidation volume spike (potential cascade)
+      - alert: LiquidationVolumeSpike
+        expr: increase(sur_keeper_liquidations_total[5m]) > 10
+        for: 0s
+        labels:
+          severity: P2
+          service: keeper
+        annotations:
+          summary: "{{ $value }} liquidations in 5 min — possible cascade"
+          description: >
+            High liquidation volume detected. This may indicate a sharp market
+            move. If the engine circuit breaker hasn't triggered, it's within
+            thresholds, but monitor for acceleration.
+
+      # Oracle health degraded but not circuit-broken
+      - alert: OracleHealthDegraded
+        expr: sur_oracle_healthy == 0 and sur_oracle_circuit_breaker_active == 0
+        for: 1m
+        labels:
+          severity: P2
+          service: oracle
+        annotations:
+          summary: "OracleRouter reports unhealthy but CB not triggered"
+          description: >
+            The oracle health check is failing but the circuit breaker hasn't
+            activated. Investigate price feed quality and freshness.

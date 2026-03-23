@@ -1,0 +1,89 @@
+# SUR Protocol - Monitoring Stack
+# Prometheus + Grafana + Alertmanager
+#
+# Usage:
+#   docker compose up -d
+#
+# Access:
+#   Prometheus:   http://localhost:9090
+#   Grafana:      http://localhost:3030  (admin / sur-monitor)
+#   Alertmanager: http://localhost:9093
+
+services:
+  # -------------------------------------------------------
+  # Prometheus — metrics collection and alerting engine
+  # -------------------------------------------------------
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    container_name: sur-prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./alerting-rules.yml:/etc/prometheus/alerting-rules.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=30d"
+      - "--web.enable-lifecycle"
+      - "--web.enable-admin-api"
+    networks:
+      - sur-monitoring
+      - sur-backend
+
+  # -------------------------------------------------------
+  # Alertmanager — alert routing and deduplication
+  # -------------------------------------------------------
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: sur-alertmanager
+    restart: unless-stopped
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager-data:/alertmanager
+    command:
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+      - "--storage.path=/alertmanager"
+    networks:
+      - sur-monitoring
+
+  # -------------------------------------------------------
+  # Grafana — dashboards and visualization
+  # -------------------------------------------------------
+  grafana:
+    image: grafana/grafana:10.4.1
+    container_name: sur-grafana
+    restart: unless-stopped
+    ports:
+      - "3030:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=sur-monitor
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=/var/lib/grafana/dashboards/sur-overview.json
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    networks:
+      - sur-monitoring
+
+volumes:
+  prometheus-data:
+    driver: local
+  alertmanager-data:
+    driver: local
+  grafana-data:
+    driver: local
+
+networks:
+  sur-monitoring:
+    driver: bridge
+  # External network shared with SUR backend services
+  sur-backend:
+    external: true
+    name: sur-backend

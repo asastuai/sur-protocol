@@ -3,15 +3,9 @@ pragma solidity ^0.8.24;
 
 import {IPerpEngine, IPerpVault} from "./interfaces/ISurInterfaces.sol";
 
-/// @dev Minimal interface to read OI data from PerpEngine for dynamic spread
+/// @dev G-18: Lightweight OI interface (avoids decoding 14 return values)
 interface IPerpEngineOI {
-    function markets(bytes32 marketId) external view returns (
-        bytes32 id, string memory name, bool active,
-        uint256 initialMarginBps, uint256 maintenanceMarginBps,
-        uint256 maxPositionSize, uint256 markPrice, uint256 indexPrice,
-        uint256 lastPriceUpdate, int256 cumulativeFunding, uint256 lastFundingUpdate,
-        uint256 fundingIntervalSecs, uint256 openInterestLong, uint256 openInterestShort
-    );
+    function getOpenInterest(bytes32 marketId) external view returns (uint256 oiLong, uint256 oiShort);
 }
 
 /// @title SUR Protocol - OrderSettlement
@@ -54,6 +48,7 @@ contract OrderSettlement {
     error ZeroSize();
     error ZeroPrice();
     error BatchEmpty();
+    error SelfTrade();
     error OrderTooRecent(uint256 signedAt, uint256 minSettleTime);
     error OrderSignedInFuture(uint256 signedAt, uint256 currentTime);
 
@@ -79,6 +74,8 @@ contract OrderSettlement {
     event PauseStatusChanged(bool isPaused);
     event TimeLockUpdated(uint256 newMinDelaySeconds);
     event DynamicSpreadApplied(bytes32 indexed marketId, address indexed trader, uint256 extraFeeBps, uint256 skewRatioBps);
+    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
+    event OwnershipTransferStarted(address indexed currentOwner, address indexed pendingOwner);
 
     // ============================================================
     //                       EIP-712 TYPES
@@ -129,6 +126,7 @@ contract OrderSettlement {
     IPerpVault public immutable vault;
 
     address public owner;
+    address public pendingOwner;
     address public feeRecipient;
     bool public paused;
 
@@ -165,6 +163,16 @@ contract OrderSettlement {
     modifier onlyOperator() { if (!operators[msg.sender]) revert NotOperator(); _; }
     modifier whenNotPaused() { if (paused) revert Paused(); _; }
 
+    /// @dev M-3 fix: Reentrancy guard (G-19: transient storage for gas efficiency)
+    modifier nonReentrant() {
+        assembly {
+            if tload(0) { revert(0, 0) }
+            tstore(0, 1)
+        }
+        _;
+        assembly { tstore(0, 0) }
+    }
+
     // ============================================================
     //                       CONSTRUCTOR
     // ============================================================
@@ -192,7 +200,7 @@ contract OrderSettlement {
     // ============================================================
 
     function settleBatch(MatchedTrade[] calldata trades)
-        external onlyOperator whenNotPaused
+        external onlyOperator whenNotPaused nonReentrant
     {
         uint256 len = trades.length;
         if (len == 0) revert BatchEmpty();
@@ -206,7 +214,7 @@ contract OrderSettlement {
     }
 
     function settleOne(MatchedTrade calldata trade)
-        external onlyOperator whenNotPaused
+        external onlyOperator whenNotPaused nonReentrant
     {
         uint256 batchId = batchCounter++;
         _settleTrade(trade);
@@ -244,6 +252,7 @@ contract OrderSettlement {
         SignedOrder calldata taker = trade.taker;
 
         // --- Validations ---
+        if (maker.trader == taker.trader) revert SelfTrade();
         if (maker.marketId != taker.marketId) revert MarketMismatch();
         if (maker.isLong == taker.isLong) revert SidesNotOpposite();
         if (trade.executionSize == 0) revert ZeroSize();
@@ -253,9 +262,22 @@ contract OrderSettlement {
         if (usedNonces[maker.trader][maker.nonce]) revert NonceAlreadyUsed(maker.trader, maker.nonce);
         if (usedNonces[taker.trader][taker.nonce]) revert NonceAlreadyUsed(taker.trader, taker.nonce);
 
-        // --- Verify Signatures ---
-        _verifySignature(maker);
-        _verifySignature(taker);
+        // --- C-3/C-4 FIX: Validate execution price/size against signed order limits ---
+        // Taker buy (long): execution price must not exceed taker's limit price
+        // Taker sell (short): execution price must not be below taker's limit price
+        if (taker.isLong) {
+            require(trade.executionPrice <= taker.price, "Exec price exceeds taker limit");
+            require(trade.executionPrice >= maker.price, "Exec price below maker limit");
+        } else {
+            require(trade.executionPrice >= taker.price, "Exec price below taker limit");
+            require(trade.executionPrice <= maker.price, "Exec price exceeds maker limit");
+        }
+        require(trade.executionSize <= maker.size, "Exec size exceeds maker order");
+        require(trade.executionSize <= taker.size, "Exec size exceeds taker order");
+
+        // --- Verify Signatures (G-14: returns digest to avoid recomputation) ---
+        bytes32 makerDigest = _verifySignatureAndDigest(maker);
+        bytes32 takerDigest = _verifySignatureAndDigest(taker);
 
         // --- Mark nonces ---
         usedNonces[maker.trader][maker.nonce] = true;
@@ -263,22 +285,13 @@ contract OrderSettlement {
 
         // --- MEV Protection: verify commit-settle delay ---
         if (minSettlementDelay > 0) {
-            bytes32 makerDigest = _orderDigest(maker);
-            bytes32 takerDigest = _orderDigest(taker);
 
             uint256 makerCommit = orderCommitTime[makerDigest];
             uint256 takerCommit = orderCommitTime[takerDigest];
 
-            // Orders must be committed first
+            // M-4 fix: Orders MUST be pre-committed when delay > 0 (no auto-commit bypass)
             if (makerCommit == 0 || takerCommit == 0) {
-                // Auto-commit if delay is very short (<=2s) for convenience
-                if (minSettlementDelay <= 2) {
-                    // Allow instant settlement with auto-commit
-                    orderCommitTime[makerDigest] = block.timestamp;
-                    orderCommitTime[takerDigest] = block.timestamp;
-                } else {
-                    revert OrderTooRecent(0, minSettlementDelay);
-                }
+                revert OrderTooRecent(0, minSettlementDelay);
             } else {
                 // Check delay has passed
                 uint256 earliestSettle = makerCommit > takerCommit ? makerCommit : takerCommit;
@@ -289,16 +302,21 @@ contract OrderSettlement {
         }
 
         // --- Collect fees (with dynamic spread) ---
+        // G-16/G-17: Cache storage reads
         uint256 notional = (trade.executionPrice * trade.executionSize) / SIZE_PRECISION;
-        uint256 mFee = (notional * makerFeeBps) / BPS;
+        uint32 _makerFeeBps = makerFeeBps;
+        uint32 _takerFeeBps = takerFeeBps;
+        address _feeRecipient = feeRecipient;
+
+        uint256 mFee = (notional * _makerFeeBps) / BPS;
 
         // Dynamic spread: extra fee on taker if their trade increases OI skew
         uint32 extraSpread = _calculateDynamicSpread(taker.marketId, taker.isLong);
-        uint256 effectiveTakerBps = uint256(takerFeeBps) + uint256(extraSpread);
+        uint256 effectiveTakerBps = uint256(_takerFeeBps) + uint256(extraSpread);
         uint256 tFee = (notional * effectiveTakerBps) / BPS;
 
-        if (mFee > 0) vault.internalTransfer(maker.trader, feeRecipient, mFee);
-        if (tFee > 0) vault.internalTransfer(taker.trader, feeRecipient, tFee);
+        if (mFee > 0) vault.internalTransfer(maker.trader, _feeRecipient, mFee);
+        if (tFee > 0) vault.internalTransfer(taker.trader, _feeRecipient, tFee);
 
         if (extraSpread > 0) {
             emit DynamicSpreadApplied(taker.marketId, taker.trader, extraSpread, 0);
@@ -327,26 +345,18 @@ contract OrderSettlement {
     //                  EIP-712 VERIFICATION
     // ============================================================
 
-    function _verifySignature(SignedOrder calldata order) internal view {
+    /// @dev G-14: Combined verify + digest return (saves ~3000 gas/trade by avoiding double keccak256)
+    function _verifySignatureAndDigest(SignedOrder calldata order) internal view returns (bytes32 digest) {
         bytes32 structHash = keccak256(abi.encode(
             ORDER_TYPEHASH,
             order.trader, order.marketId, order.isLong,
             order.size, order.price, order.nonce, order.expiry
         ));
 
-        bytes32 digest = keccak256(abi.encodePacked("\x19\x01", DOMAIN_SEPARATOR, structHash));
+        digest = keccak256(abi.encodePacked("\x19\x01", DOMAIN_SEPARATOR, structHash));
         address recovered = _recoverSigner(digest, order.signature);
 
         if (recovered != order.trader) revert InvalidSignature(order.trader, recovered);
-    }
-
-    function _orderDigest(SignedOrder calldata order) internal view returns (bytes32) {
-        bytes32 structHash = keccak256(abi.encode(
-            ORDER_TYPEHASH,
-            order.trader, order.marketId, order.isLong,
-            order.size, order.price, order.nonce, order.expiry
-        ));
-        return keccak256(abi.encodePacked("\x19\x01", DOMAIN_SEPARATOR, structHash));
     }
 
     function _recoverSigner(bytes32 digest, bytes calldata sig) internal pure returns (address) {
@@ -390,6 +400,22 @@ contract OrderSettlement {
     //                    ADMIN FUNCTIONS
     // ============================================================
 
+    /// @notice Start 2-step ownership transfer (sets pendingOwner)
+    function transferOwnership(address newOwner) external onlyOwner {
+        if (newOwner == address(0)) revert ZeroAddress();
+        pendingOwner = newOwner;
+        emit OwnershipTransferStarted(owner, newOwner);
+    }
+
+    /// @notice Accept ownership (must be called by pendingOwner)
+    function acceptOwnership() external {
+        if (msg.sender != pendingOwner) revert NotOwner();
+        address oldOwner = owner;
+        owner = msg.sender;
+        pendingOwner = address(0);
+        emit OwnershipTransferred(oldOwner, msg.sender);
+    }
+
     function setOperator(address op, bool status) external onlyOwner {
         if (op == address(0)) revert ZeroAddress();
         operators[op] = status;
@@ -402,12 +428,19 @@ contract OrderSettlement {
         feeRecipient = r;
     }
 
+    event FeesUpdated(uint32 makerFeeBps, uint32 takerFeeBps);
+
     function setFees(uint32 _maker, uint32 _taker) external onlyOwner {
+        require(_maker <= 1000 && _taker <= 1000, "Fee too high");
         makerFeeBps = _maker;
         takerFeeBps = _taker;
+        emit FeesUpdated(_maker, _taker);
     }
 
     function setSettlementDelay(uint256 minDelay, uint256 maxDelay) external onlyOwner {
+        // M-1 fix: Validate delay bounds
+        require(maxDelay >= minDelay, "max < min");
+        require(maxDelay <= 3600, "maxDelay too high"); // max 1 hour
         minSettlementDelay = minDelay;
         maxSettlementDelay = maxDelay;
         emit TimeLockUpdated(minDelay);
@@ -427,10 +460,8 @@ contract OrderSettlement {
     {
         if (!dynamicSpreadEnabled) return 0;
 
-        try IPerpEngineOI(address(engine)).markets(marketId) returns (
-            bytes32, string memory, bool,
-            uint256, uint256, uint256, uint256, uint256,
-            uint256, int256, uint256, uint256,
+        // G-18: Use lightweight getOpenInterest instead of full markets() struct
+        try IPerpEngineOI(address(engine)).getOpenInterest(marketId) returns (
             uint256 oiLong, uint256 oiShort
         ) {
             uint256 totalOi = oiLong + oiShort;
@@ -459,13 +490,19 @@ contract OrderSettlement {
         }
     }
 
+    event DynamicSpreadUpdated(bool enabled);
+    event DynamicSpreadTiersUpdated(uint32 tier1, uint32 tier2, uint32 tier3);
+
     function setDynamicSpreadEnabled(bool enabled) external onlyOwner {
         dynamicSpreadEnabled = enabled;
+        emit DynamicSpreadUpdated(enabled);
     }
 
     function setDynamicSpreadTiers(uint32 tier1, uint32 tier2, uint32 tier3) external onlyOwner {
+        require(tier1 <= tier2 && tier2 <= tier3, "Tiers must be ascending");
         spreadTier1Bps = tier1;
         spreadTier2Bps = tier2;
         spreadTier3Bps = tier3;
+        emit DynamicSpreadTiersUpdated(tier1, tier2, tier3);
     }
 }

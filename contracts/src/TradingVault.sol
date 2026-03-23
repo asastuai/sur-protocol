@@ -62,6 +62,9 @@ contract TradingVault {
     event PerformanceFeeCollected(bytes32 indexed vaultId, uint256 amount);
     event ManagementFeeCollected(bytes32 indexed vaultId, uint256 amount);
     event VaultPauseChanged(bytes32 indexed vaultId, bool isPaused);
+    event OwnershipTransferred(address indexed oldOwner, address indexed newOwner);
+    event OwnershipTransferStarted(address indexed currentOwner, address indexed pendingOwner);
+    event OperatorUpdated(address indexed operator, bool status);
 
     // ============================================================
     //                    STRUCTS
@@ -108,6 +111,7 @@ contract TradingVault {
     // ============================================================
 
     address public owner;
+    address public pendingOwner;
     IPerpVault public perpVault;
     IPerpEngine public perpEngine;
 
@@ -129,6 +133,10 @@ contract TradingVault {
     // This avoids creating actual contracts per vault
 
     mapping(address => bool) public operators;
+
+    /// @notice H-14 fix: Track when vault was paused by drawdown + cooldown
+    mapping(bytes32 => uint256) public drawdownPausedAt;
+    uint256 public drawdownCooldownSecs = 24 hours;
 
     // ============================================================
     //                    MODIFIERS
@@ -225,22 +233,22 @@ contract TradingVault {
 
         Vault storage v = vaults[vaultId];
 
-        // Check deposit cap
+        // Accrue management fees FIRST (H-15 fix: before equity snapshot)
+        _accrueManagementFee(vaultId);
+
+        // Check deposit cap (post-fee equity)
         uint256 currentEquity = _getVaultEquity(vaultId);
         if (v.depositCap > 0 && currentEquity + amount > v.depositCap) {
             revert DepositCapExceeded(currentEquity + amount, v.depositCap);
         }
 
-        // Accrue management fees before share calculation
-        _accrueManagementFee(vaultId);
-
-        // Calculate shares to issue
+        // Calculate shares to issue (using post-fee equity)
         uint256 shares;
         if (v.totalShares == 0) {
-            // First deposit: 1 USDC = 1e12 shares (to allow fractional shares)
+            // M-22 fix: Require minimum first deposit to prevent share inflation attack
+            require(amount >= 1000 * PRICE_PRECISION, "Min first deposit $1000");
             shares = amount * (SHARE_PRECISION / PRICE_PRECISION);
         } else {
-            // shares = amount * totalShares / totalEquity
             shares = (amount * v.totalShares) / currentEquity;
         }
 
@@ -261,8 +269,12 @@ contract TradingVault {
         d.depositTimestamp = block.timestamp;
         d.totalDeposited += amount;
 
-        // Update high water mark if new equity per share is higher
-        uint256 equityPerShare = _equityPerShare(vaultId);
+        // G-31: Compute equity per share inline to avoid second external call
+        // After deposit, new equity = currentEquity + amount, totalShares already updated
+        uint256 newEquity = currentEquity + amount;
+        uint256 equityPerShare = v.totalShares > 0
+            ? (newEquity * SHARE_PRECISION) / v.totalShares
+            : PRICE_PRECISION;
         if (equityPerShare > v.highWaterMark) {
             v.highWaterMark = equityPerShare;
         }
@@ -394,6 +406,7 @@ contract TradingVault {
 
         if (equityPerShare < threshold) {
             v.paused = true;
+            drawdownPausedAt[vaultId] = block.timestamp; // H-14 fix: track drawdown pause time
             emit VaultPauseChanged(vaultId, true);
             revert MaxDrawdownBreached(_getVaultEquity(vaultId), v.highWaterMark);
         }
@@ -404,20 +417,19 @@ contract TradingVault {
     // ============================================================
 
     /// @notice Deterministic account address for a vault in PerpVault
-    /// @dev Maps vaultId to a unique address for balance tracking
+    /// @dev M-21 fix: Double-hash with prefix to prevent collisions with real EOAs
     function _vaultAccount(bytes32 vaultId) internal pure returns (address) {
-        return address(uint160(uint256(vaultId)));
+        return address(uint160(uint256(keccak256(abi.encodePacked("SUR_VAULT", vaultId)))));
     }
 
-    /// @notice Get total equity of a vault (free balance + unrealized PnL)
-    /// @dev In a full implementation, this would query PerpEngine for all
-    ///      vault positions' unrealized PnL. Simplified here to free balance.
+    /// @notice Get total equity of a vault (free balance + margin + unrealized PnL)
+    /// @dev C-6 fix: Queries PerpEngine for account equity including all position PnL.
     function _getVaultEquity(bytes32 vaultId) internal view returns (uint256) {
-        // Free USDC balance in vault's PerpVault account
-        uint256 freeBalance = perpVault.balances(_vaultAccount(vaultId));
-        // TODO: Add unrealized PnL from PerpEngine positions
-        // In production: equity = freeBalance + sum(margin + unrealizedPnl) for all positions
-        return freeBalance;
+        address vaultAccount = _vaultAccount(vaultId);
+        // getAccountEquity returns: equity = free vault balance + sum(margin + unrealizedPnl)
+        (int256 equity, ) = perpEngine.getAccountEquity(vaultAccount);
+        // If equity is negative (bad debt), return 0
+        return equity > 0 ? uint256(equity) : 0;
     }
 
     /// @notice Equity per share (6 decimals, like USDC)
@@ -494,8 +506,19 @@ contract TradingVault {
     //                    ADMIN
     // ============================================================
 
+    error DrawdownCooldownActive(uint256 remainingSecs);
+
     /// @notice Manager can unpause a vault that was auto-paused by drawdown
+    /// @dev H-14 fix: Enforces cooldown period after drawdown pause
     function unpauseVault(bytes32 vaultId) external onlyManager(vaultId) {
+        uint256 pausedAt = drawdownPausedAt[vaultId];
+        if (pausedAt > 0) {
+            uint256 elapsed = block.timestamp - pausedAt;
+            if (elapsed < drawdownCooldownSecs) {
+                revert DrawdownCooldownActive(drawdownCooldownSecs - elapsed);
+            }
+            drawdownPausedAt[vaultId] = 0; // reset
+        }
         vaults[vaultId].paused = false;
         emit VaultPauseChanged(vaultId, false);
     }
@@ -506,7 +529,23 @@ contract TradingVault {
         emit VaultPauseChanged(vaultId, true);
     }
 
+    function transferOwnership(address newOwner) external onlyOwner {
+        if (newOwner == address(0)) revert ZeroAddress();
+        pendingOwner = newOwner;
+        emit OwnershipTransferStarted(owner, newOwner);
+    }
+
+    function acceptOwnership() external {
+        if (msg.sender != pendingOwner) revert NotOwner();
+        address old = owner;
+        owner = msg.sender;
+        pendingOwner = address(0);
+        emit OwnershipTransferred(old, msg.sender);
+    }
+
     function setOperator(address op, bool status) external onlyOwner {
+        if (op == address(0)) revert ZeroAddress();
         operators[op] = status;
+        emit OperatorUpdated(op, status);
     }
 }

@@ -175,7 +175,7 @@ export default function AgentsPage() {
                     color: "text-sur-yellow",
                   },
                 ].map((item) => (
-                  <div key={item.title} className="bg-sur-surface border border-sur-border rounded-xl p-4">
+                  <div key={item.title} className="bg-sur-surface border border-sur-border rounded-xl p-4 transition-all duration-200 hover:border-sur-accent/20 hover:shadow-[0_0_20px_rgba(0,82,255,0.06)]">
                     <div className={`${item.color} mb-2`}>{item.icon}</div>
                     <h3 className="text-sm font-semibold mb-1">{item.title}</h3>
                     <p className="text-[11px] text-sur-muted leading-relaxed">{item.desc}</p>

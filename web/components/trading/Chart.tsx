@@ -94,7 +94,7 @@ async function fetchBinanceCandles(market: string, binanceInterval: string): Pro
       volume.push({
         time,
         value: vol,
-        color: close >= open ? "#0ECB8140" : "#F6465D40",
+        color: close >= open ? "#3fb95040" : "#f8514940",
       });
     }
 
@@ -225,10 +225,10 @@ export function Chart({ market }: ChartProps) {
   // ---- Shared chart config ----
   const getChartOpts = (w: number, h: number, showTimeAxis: boolean) => ({
     width: w, height: h,
-    layout: { background: { color: "#141518" }, textColor: "#6b7280", fontSize: 11, fontFamily: "DM Sans, system-ui, sans-serif" },
-    grid: { vertLines: { color: "#1e2030" }, horzLines: { color: "#1e2030" } },
-    rightPriceScale: { borderColor: "#252836", autoScale: true },
-    timeScale: { borderColor: "#252836", timeVisible: true, secondsVisible: false, barSpacing: 8, visible: showTimeAxis },
+    layout: { background: { color: "#161618" }, textColor: "#6b7280", fontSize: 11, fontFamily: "DM Sans, system-ui, sans-serif" },
+    grid: { vertLines: { color: "transparent" }, horzLines: { color: "transparent" } },
+    rightPriceScale: { borderColor: "#28282e", autoScale: true },
+    timeScale: { borderColor: "#28282e", timeVisible: true, secondsVisible: false, barSpacing: 8, visible: showTimeAxis },
     handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
     handleScale: { axisPressedMouseMove: true, mouseWheel: true, pinch: true },
     crosshair: { mode: 0 },
@@ -252,8 +252,8 @@ export function Chart({ market }: ChartProps) {
       const mainH = mainContainerRef.current.clientHeight || 300;
       const mainChart = createChart(mainContainerRef.current, {
         ...getChartOpts(mainW, mainH, !hasSubIndicator),
-        layout: { background: { type: ColorType.Solid, color: "#141518" }, textColor: "#6b7280", fontSize: 11, fontFamily: "DM Sans, system-ui, sans-serif" },
-        rightPriceScale: { borderColor: "#252836", scaleMargins: { top: 0.05, bottom: 0.05 }, autoScale: true },
+        layout: { background: { type: ColorType.Solid, color: "#161618" }, textColor: "#6b7280", fontSize: 11, fontFamily: "DM Sans, system-ui, sans-serif" },
+        rightPriceScale: { borderColor: "#28282e", scaleMargins: { top: 0.05, bottom: 0.05 }, autoScale: true },
         crosshair: {
           mode: mod.CrosshairMode.Normal,
           vertLine: { color: "#0052FF60", width: 1, style: mod.LineStyle.Dashed, labelBackgroundColor: "#0052FF" },
@@ -272,9 +272,9 @@ export function Chart({ market }: ChartProps) {
         mainSeries = mainChart.addAreaSeries({ topColor: "#0052FF30", bottomColor: "#0052FF05", lineColor: "#0052FF", lineWidth: 2 });
       } else {
         mainSeries = mainChart.addCandlestickSeries({
-          upColor: "#0ECB81", downColor: "#F6465D",
-          borderUpColor: "#0ECB81", borderDownColor: "#F6465D",
-          wickUpColor: "#0ECB8180", wickDownColor: "#F6465D80",
+          upColor: "#3fb950", downColor: "#f85149",
+          borderUpColor: "#3fb950", borderDownColor: "#f85149",
+          wickUpColor: "#3fb95080", wickDownColor: "#f8514980",
         });
       }
 
@@ -348,8 +348,8 @@ export function Chart({ market }: ChartProps) {
       const volH = volContainerRef.current!.clientHeight || 80;
       const volChart = createChart(volContainerRef.current!, {
         ...getChartOpts(volW, volH, !hasSubIndicator),
-        layout: { background: { type: ColorType.Solid, color: "#141518" }, textColor: "#6b7280", fontSize: 10, fontFamily: "DM Sans, system-ui, sans-serif" },
-        rightPriceScale: { borderColor: "#252836", scaleMargins: { top: 0.1, bottom: 0 }, autoScale: true },
+        layout: { background: { type: ColorType.Solid, color: "#161618" }, textColor: "#6b7280", fontSize: 10, fontFamily: "DM Sans, system-ui, sans-serif" },
+        rightPriceScale: { borderColor: "#28282e", scaleMargins: { top: 0.1, bottom: 0 }, autoScale: true },
       });
       charts.push(volChart);
 
@@ -376,8 +376,8 @@ export function Chart({ market }: ChartProps) {
         const subH2 = subContainerRef.current.clientHeight || 100;
         const subChart = createChart(subContainerRef.current, {
           ...getChartOpts(subW, subH2, true),
-          layout: { background: { type: ColorType.Solid, color: "#141518" }, textColor: "#6b7280", fontSize: 10, fontFamily: "DM Sans, system-ui, sans-serif" },
-          rightPriceScale: { borderColor: "#252836", scaleMargins: { top: 0.1, bottom: 0.1 }, autoScale: true },
+          layout: { background: { type: ColorType.Solid, color: "#161618" }, textColor: "#6b7280", fontSize: 10, fontFamily: "DM Sans, system-ui, sans-serif" },
+          rightPriceScale: { borderColor: "#28282e", scaleMargins: { top: 0.1, bottom: 0.1 }, autoScale: true },
         });
         charts.push(subChart);
 
@@ -386,8 +386,8 @@ export function Chart({ market }: ChartProps) {
           const rsiSeries = subChart.addLineSeries({ color: "#f59e0b", lineWidth: 2, lastValueVisible: true, priceLineVisible: false });
           rsiSeries.setData(rsiData);
           // Overbought/oversold lines
-          const ob = subChart.addLineSeries({ color: "#F6465D40", lineWidth: 1, lineStyle: 2, lastValueVisible: false, priceLineVisible: false });
-          const os = subChart.addLineSeries({ color: "#0ECB8140", lineWidth: 1, lineStyle: 2, lastValueVisible: false, priceLineVisible: false });
+          const ob = subChart.addLineSeries({ color: "#f8514940", lineWidth: 1, lineStyle: 2, lastValueVisible: false, priceLineVisible: false });
+          const os = subChart.addLineSeries({ color: "#3fb95040", lineWidth: 1, lineStyle: 2, lastValueVisible: false, priceLineVisible: false });
           if (rsiData.length > 0) {
             ob.setData([{ time: rsiData[0].time, value: 70 }, { time: rsiData[rsiData.length - 1].time, value: 70 }]);
             os.setData([{ time: rsiData[0].time, value: 30 }, { time: rsiData[rsiData.length - 1].time, value: 30 }]);
@@ -401,7 +401,7 @@ export function Chart({ market }: ChartProps) {
           const histSeries = subChart.addHistogramSeries({ lastValueVisible: false, priceLineVisible: false });
           macdSeries.setData(macdLine);
           sigSeries.setData(signalLine);
-          histSeries.setData(histogram.map(h => ({ ...h, color: h.value >= 0 ? "#0ECB8160" : "#F6465D60" })));
+          histSeries.setData(histogram.map(h => ({ ...h, color: h.value >= 0 ? "#3fb95060" : "#f8514960" })));
         }
 
         subChart.timeScale().fitContent();
@@ -583,7 +583,7 @@ export function Chart({ market }: ChartProps) {
     } else if (type === "fib") {
       const diff = p2.price - p1.price;
       const levels = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
-      const colors = ["#787B86", "#F6465D", "#0ECB81", "#0ECB81", "#0ECB81", "#F6465D", "#787B86"];
+      const colors = ["#787B86", "#f85149", "#3fb950", "#3fb950", "#3fb950", "#f85149", "#787B86"];
       const chartW = ctx.canvas.width / (window.devicePixelRatio || 1);
 
       for (let i = 0; i < levels.length; i++) {
@@ -626,7 +626,7 @@ export function Chart({ market }: ChartProps) {
       const boxH = Math.abs(pt2.y - pt1.y);
       // Shaded area
       const priceDiff = p2.price - p1.price;
-      ctx.fillStyle = priceDiff >= 0 ? "#0ECB8110" : "#F6465D10";
+      ctx.fillStyle = priceDiff >= 0 ? "#3fb95010" : "#f8514910";
       ctx.fillRect(boxX, boxY, boxW, boxH);
       ctx.strokeRect(boxX, boxY, boxW, boxH);
       ctx.setLineDash([]);
@@ -637,17 +637,17 @@ export function Chart({ market }: ChartProps) {
       // Background pill
       const labelW = 110;
       const labelH = 36;
-      ctx.fillStyle = "#1b1d28EE";
+      ctx.fillStyle = "#1c1c20EE";
       ctx.beginPath();
       const rx = midX - labelW / 2;
       const ry = midY - labelH / 2;
       ctx.roundRect(rx, ry, labelW, labelH, 4);
       ctx.fill();
-      ctx.strokeStyle = "#252836";
+      ctx.strokeStyle = "#28282e";
       ctx.lineWidth = 1;
       ctx.stroke();
       // Text
-      ctx.fillStyle = priceDiff >= 0 ? "#0ECB81" : "#F6465D";
+      ctx.fillStyle = priceDiff >= 0 ? "#3fb950" : "#f85149";
       ctx.font = "bold 12px JetBrains Mono, monospace";
       ctx.textAlign = "center";
       ctx.fillText(`${priceDiff >= 0 ? "+" : ""}${pctDiff.toFixed(2)}%`, midX, midY - 2);
@@ -911,9 +911,9 @@ export function Chart({ market }: ChartProps) {
   };
 
   return (
-    <div className={`flex flex-col h-full ${isFullscreen ? "fixed inset-0 z-50" : ""}`} style={{ background: "#141518" }}>
+    <div className={`flex flex-col h-full ${isFullscreen ? "fixed inset-0 z-50" : ""}`} style={{ background: "#161618" }}>
       {/* ===== TOP TOOLBAR ===== */}
-      <div className="flex items-center border-b border-[#252836] flex-shrink-0 h-9">
+      <div className="flex items-center border-b border-[#28282e] flex-shrink-0 h-9">
         {/* Left section: timeframes + chart type + indicators */}
         <div className="flex items-center gap-0.5 px-2 flex-1 overflow-x-auto">
           {/* Timeframes */}
@@ -924,14 +924,14 @@ export function Chart({ market }: ChartProps) {
               className={`px-2 py-1 text-[11px] rounded transition-colors whitespace-nowrap ${
                 selectedTf === tf.label
                   ? "bg-sur-accent/15 text-sur-accent font-medium"
-                  : "text-sur-muted hover:text-sur-text hover:bg-[#252836]"
+                  : "text-sur-muted hover:text-sur-text hover:bg-[#28282e]"
               }`}
             >
               {tf.label}
             </button>
           ))}
 
-          <div className="w-px h-4 bg-[#252836] mx-1" />
+          <div className="w-px h-4 bg-[#28282e] mx-1" />
 
           {/* Chart type */}
           {CHART_TYPES.map((ct) => (
@@ -942,14 +942,14 @@ export function Chart({ market }: ChartProps) {
               className={`p-1.5 rounded transition-colors ${
                 chartType === ct.key
                   ? "text-sur-accent bg-sur-accent/10"
-                  : "text-sur-muted hover:text-sur-text hover:bg-[#252836]"
+                  : "text-sur-muted hover:text-sur-text hover:bg-[#28282e]"
               }`}
             >
               {ct.icon}
             </button>
           ))}
 
-          <div className="w-px h-4 bg-[#252836] mx-1" />
+          <div className="w-px h-4 bg-[#28282e] mx-1" />
 
           {/* Indicators button */}
           <div className="relative" ref={indicatorMenuRef}>
@@ -958,7 +958,7 @@ export function Chart({ market }: ChartProps) {
               className={`flex items-center gap-1 px-2 py-1 text-[11px] rounded transition-colors ${
                 activeIndicators.length > 0
                   ? "text-sur-accent bg-sur-accent/10"
-                  : "text-sur-muted hover:text-sur-text hover:bg-[#252836]"
+                  : "text-sur-muted hover:text-sur-text hover:bg-[#28282e]"
               }`}
             >
               <IndicatorIcon />
@@ -1007,11 +1007,11 @@ export function Chart({ market }: ChartProps) {
           </div>
 
           {/* Settings */}
-          <button className="p-1.5 rounded text-sur-muted hover:text-sur-text hover:bg-[#252836] transition-colors" title="Settings">
+          <button className="p-1.5 rounded text-sur-muted hover:text-sur-text hover:bg-[#28282e] transition-colors" title="Settings">
             <SettingsIcon />
           </button>
 
-          <div className="w-px h-4 bg-[#252836] mx-1" />
+          <div className="w-px h-4 bg-[#28282e] mx-1" />
 
           {/* Last Price label */}
           <span className="text-[11px] text-sur-accent font-medium px-1">
@@ -1035,11 +1035,11 @@ export function Chart({ market }: ChartProps) {
             </button>
           ))}
 
-          <div className="w-px h-4 bg-[#252836] mx-1" />
+          <div className="w-px h-4 bg-[#28282e] mx-1" />
 
           <button
             onClick={toggleFullscreen}
-            className="p-1 rounded text-sur-muted hover:text-sur-text hover:bg-[#252836] transition-colors"
+            className="p-1 rounded text-sur-muted hover:text-sur-text hover:bg-[#28282e] transition-colors"
             title="Fullscreen"
           >
             <FullscreenIcon />
@@ -1050,7 +1050,7 @@ export function Chart({ market }: ChartProps) {
       {/* ===== MAIN AREA: LEFT TOOLBAR + CHART ===== */}
       <div className="flex-1 flex min-h-0">
         {/* Left drawing toolbar */}
-        <div className="w-9 border-r border-[#252836] flex flex-col items-center py-1.5 gap-0.5 flex-shrink-0 overflow-y-auto">
+        <div className="w-9 border-r border-[#28282e] flex flex-col items-center py-1.5 gap-0.5 flex-shrink-0 overflow-y-auto">
           {DRAW_TOOLS.map((tool) => {
             const isActive = activeTool === tool.key
               || (tool.key === "magnet" && magnetMode)
@@ -1063,7 +1063,7 @@ export function Chart({ market }: ChartProps) {
                 className={`w-7 h-7 flex items-center justify-center rounded transition-colors ${
                   isActive
                     ? "text-sur-accent bg-sur-accent/10"
-                    : "text-sur-muted hover:text-sur-text hover:bg-[#252836]"
+                    : "text-sur-muted hover:text-sur-text hover:bg-[#28282e]"
                 }`}
               >
                 {tool.icon}
@@ -1109,7 +1109,7 @@ export function Chart({ market }: ChartProps) {
 
           {/* Volume pane resize handle */}
           <div
-            className="h-[3px] bg-[#252836] hover:bg-sur-accent/40 cursor-row-resize flex-shrink-0 relative group"
+            className="h-[3px] bg-[#28282e] hover:bg-sur-accent/40 cursor-row-resize flex-shrink-0 relative group"
             onMouseDown={(e) => {
               e.preventDefault();
               const startY = e.clientY;
@@ -1132,7 +1132,7 @@ export function Chart({ market }: ChartProps) {
           {hasSubIndicator && (
             <>
               <div
-                className="h-[3px] bg-[#252836] hover:bg-sur-accent/40 cursor-row-resize flex-shrink-0"
+                className="h-[3px] bg-[#28282e] hover:bg-sur-accent/40 cursor-row-resize flex-shrink-0"
                 onMouseDown={(e) => {
                   e.preventDefault();
                   const startY = e.clientY;
@@ -1283,7 +1283,7 @@ function generateSampleData(market: string, intervalSeconds: number, targetEndPr
     volumeData.push({
       time,
       value: vol,
-      color: close >= open ? "#0ECB8138" : "#F6465D38",
+      color: close >= open ? "#3fb95038" : "#f8514938",
     });
   }
 

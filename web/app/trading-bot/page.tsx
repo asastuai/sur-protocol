@@ -527,7 +527,7 @@ export default function TradingBotPage() {
             {/* ============================================================ */}
             {/*                    RISK SETTINGS + PERFORMANCE               */}
             {/* ============================================================ */}
-            <div className="grid grid-cols-3 gap-6 mb-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
               {/* Risk Settings */}
               <div className="bg-sur-surface border border-sur-border rounded-xl p-4">
                 <div className="flex items-center gap-2 mb-4">
@@ -673,7 +673,7 @@ export default function TradingBotPage() {
                 </div>
 
                 {/* Stats grid */}
-                <div className="grid grid-cols-6 gap-4">
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
                   {[
                     { label: "Total Trades", value: botStatus?.totalTrades?.toLocaleString() ?? "--" },
                     { label: "Win Rate", value: botStatus?.winRate != null ? `${botStatus.winRate}%` : "--", color: botStatus?.winRate != null && botStatus.winRate >= 50 ? "text-sur-green" : undefined },

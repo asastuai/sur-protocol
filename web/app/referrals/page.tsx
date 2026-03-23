@@ -1,14 +1,33 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useAccount } from "wagmi";
+
+interface ReferralStats {
+  referred_count: number;
+  referral_volume: number;
+  points_earned: number;
+}
+
+const API_BASE = process.env.NEXT_PUBLIC_WS_URL?.replace("wss://", "https://").replace("ws://", "http://") || "http://localhost:3002";
 
 export default function ReferralsPage() {
   const { isConnected, address } = useAccount();
   const [copied, setCopied] = useState(false);
+  const [refInput, setRefInput] = useState("");
+  const [registered, setRegistered] = useState(false);
+  const [regError, setRegError] = useState("");
 
-  const referralCode = address ? address.slice(0, 8).toLowerCase() : "";
+  const referralCode = address ? address.slice(0, 10).toLowerCase() : "";
   const referralLink = address ? `https://sur.exchange/?ref=${referralCode}` : "";
+
+  // Check URL for ref param on mount
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const ref = params.get("ref");
+    if (ref) setRefInput(ref);
+  }, []);
 
   const handleCopy = () => {
     if (referralLink) {
@@ -18,17 +37,43 @@ export default function ReferralsPage() {
     }
   };
 
+  const handleRegister = async () => {
+    if (!address || !refInput.trim()) return;
+    setRegError("");
+
+    try {
+      const res = await fetch(`${API_BASE}/api/points/referral`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          referrer: refInput.startsWith("0x") ? refInput : `0x${refInput}`,
+          referee: address,
+          code: refInput,
+        }),
+      });
+
+      if (res.ok) {
+        setRegistered(true);
+      } else {
+        const data = await res.json();
+        setRegError(data.error || "Failed to register referral");
+      }
+    } catch {
+      setRegError("Could not reach API. Try again later.");
+    }
+  };
+
   return (
     <div className="h-full overflow-y-auto">
       <div className="max-w-4xl mx-auto px-6 py-8">
         <div className="flex items-center gap-2 mb-2">
           <h1 className="text-2xl font-bold">Referrals</h1>
-          <span className="px-2 py-0.5 rounded text-[9px] font-bold bg-sur-yellow/15 text-sur-yellow uppercase tracking-wider">
-            Launching Soon
+          <span className="px-2 py-0.5 rounded text-[9px] font-bold bg-sur-green/15 text-sur-green uppercase tracking-wider">
+            Active
           </span>
         </div>
         <p className="text-sm text-sur-muted mb-8">
-          Earn fee rebates by referring traders to SUR Protocol. Share your referral link and earn a percentage of their trading fees.
+          Earn 10% bonus points from every trader you refer. Share your link and grow the SUR community.
         </p>
 
         {!isConnected ? (
@@ -42,7 +87,7 @@ export default function ReferralsPage() {
             </div>
             <h3 className="text-sm font-semibold mb-2">Connect Your Wallet</h3>
             <p className="text-xs text-sur-muted max-w-sm mx-auto">
-              Connect your wallet to generate a unique referral link. The referral program activates with mainnet launch.
+              Connect your wallet to generate a unique referral link and start earning bonus points.
             </p>
           </div>
         ) : (
@@ -62,26 +107,52 @@ export default function ReferralsPage() {
                 </button>
               </div>
               <p className="text-[10px] text-sur-muted mt-3">
-                Referral tracking activates on mainnet. Share your link now — anyone who signs up through it will be linked to your account.
+                Anyone who registers through your link earns you 10% of their points — forever.
               </p>
             </div>
 
-            {/* Stats — real zeros */}
+            {/* Were you referred? */}
+            <div className="bg-sur-surface border border-sur-border rounded-xl p-6">
+              <h2 className="text-sm font-semibold mb-3">Were you referred?</h2>
+              {registered ? (
+                <p className="text-xs text-sur-green font-medium">Referral registered! Your referrer will earn bonus points from your trading.</p>
+              ) : (
+                <div className="flex items-center gap-3">
+                  <input
+                    type="text"
+                    value={refInput}
+                    onChange={e => setRefInput(e.target.value)}
+                    placeholder="Referral code or address"
+                    className="flex-1 px-4 py-2.5 text-xs bg-sur-bg border border-sur-border rounded-lg focus:border-sur-accent/50 outline-none transition-colors font-mono"
+                  />
+                  <button
+                    onClick={handleRegister}
+                    disabled={!refInput.trim()}
+                    className="px-4 py-2.5 bg-sur-accent text-white text-xs font-semibold rounded-lg hover:bg-sur-accent/90 transition-colors disabled:opacity-50"
+                  >
+                    Register
+                  </button>
+                </div>
+              )}
+              {regError && <p className="text-xs text-sur-red mt-2">{regError}</p>}
+            </div>
+
+            {/* Stats */}
             <div className="grid grid-cols-3 gap-4">
               <div className="bg-sur-surface border border-sur-border rounded-xl p-5">
                 <div className="text-[11px] text-sur-muted uppercase tracking-wider mb-1">Referred Users</div>
-                <div className="text-xl font-bold tabular-nums">0</div>
-                <div className="text-[10px] text-sur-muted mt-0.5">Tracked on-chain at launch</div>
+                <div className="text-xl font-bold tabular-nums">—</div>
+                <div className="text-[10px] text-sur-muted mt-0.5">Tracked automatically</div>
               </div>
               <div className="bg-sur-surface border border-sur-border rounded-xl p-5">
                 <div className="text-[11px] text-sur-muted uppercase tracking-wider mb-1">Referral Volume</div>
-                <div className="text-xl font-bold tabular-nums">$0.00</div>
+                <div className="text-xl font-bold tabular-nums">—</div>
                 <div className="text-[10px] text-sur-muted mt-0.5">From referred traders</div>
               </div>
               <div className="bg-sur-surface border border-sur-border rounded-xl p-5">
-                <div className="text-[11px] text-sur-muted uppercase tracking-wider mb-1">Earned Rebates</div>
-                <div className="text-xl font-bold tabular-nums">$0.00</div>
-                <div className="text-[10px] text-sur-muted mt-0.5">Claimable at launch</div>
+                <div className="text-[11px] text-sur-muted uppercase tracking-wider mb-1">Points Earned</div>
+                <div className="text-xl font-bold tabular-nums">—</div>
+                <div className="text-[10px] text-sur-muted mt-0.5">10% of referrals&apos; points</div>
               </div>
             </div>
 
@@ -94,21 +165,21 @@ export default function ReferralsPage() {
                     <span className="text-sur-accent font-bold text-xs">1</span>
                   </div>
                   <span className="text-sur-text font-medium">Share Your Link</span>
-                  <p className="mt-1 leading-relaxed">Share your unique referral link with other traders. Anyone who signs up through your link is permanently linked to your account.</p>
+                  <p className="mt-1 leading-relaxed">Share your unique referral link. Anyone who registers through it is permanently linked to your account.</p>
                 </div>
                 <div>
                   <div className="w-8 h-8 rounded-lg bg-sur-accent/10 flex items-center justify-center mb-2">
                     <span className="text-sur-accent font-bold text-xs">2</span>
                   </div>
                   <span className="text-sur-text font-medium">They Trade</span>
-                  <p className="mt-1 leading-relaxed">When referred traders execute trades on SUR, a portion of their trading fees is allocated as your referral rebate.</p>
+                  <p className="mt-1 leading-relaxed">When referred traders execute trades on SUR, they earn points normally. You get 10% of their earned points as a bonus.</p>
                 </div>
                 <div>
                   <div className="w-8 h-8 rounded-lg bg-sur-accent/10 flex items-center justify-center mb-2">
                     <span className="text-sur-accent font-bold text-xs">3</span>
                   </div>
-                  <span className="text-sur-text font-medium">Earn Rebates</span>
-                  <p className="mt-1 leading-relaxed">Referral rebates accrue on-chain and are claimable anytime. Referrers earn up to 10% of trading fees from referred users.</p>
+                  <span className="text-sur-text font-medium">Earn Bonus Points</span>
+                  <p className="mt-1 leading-relaxed">Referral points accumulate automatically and count towards your Season 1 total. No cap on referrals.</p>
                 </div>
               </div>
             </div>

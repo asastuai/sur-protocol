@@ -42,7 +42,7 @@ contract CrossMarginTest is Test {
         usdc = new MockUSDC();
         vault = new PerpVault(address(usdc), owner, 0);
         insurance = new InsuranceFund(address(vault), owner);
-        engine = new PerpEngine(address(vault), owner, feeRecipient, address(insurance));
+        engine = new PerpEngine(address(vault), owner, feeRecipient, address(insurance), feeRecipient);
         liquidator = new Liquidator(address(engine), address(insurance), owner);
 
         vm.startPrank(owner);
@@ -51,6 +51,7 @@ contract CrossMarginTest is Test {
         engine.setOperator(address(liquidator), true);
         insurance.setOperator(address(liquidator), true);
         engine.setMaxExposureBps(0); // disable for non-exposure tests
+        engine.setOiSkewCap(10000);  // disable skew cap for tests
         vm.stopPrank();
 
         btcMarket = keccak256(abi.encodePacked("BTC-USD"));

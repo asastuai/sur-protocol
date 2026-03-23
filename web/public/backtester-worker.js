@@ -19,9 +19,9 @@
 
 var DEFAULT_LEVERAGE = 5;
 var FEE_RATE = 0.0006; // 0.06% taker fee per side
-var MAX_CONCURRENT = 3;
-var MAX_TRADES_PER_DAY = 10;
-var CONFIDENCE_THRESHOLD = 65;
+var MAX_CONCURRENT = 5;
+var MAX_TRADES_PER_DAY = 20;
+var CONFIDENCE_THRESHOLD = 60;
 
 /* ============================================================
    INDICATOR HELPERS
@@ -197,7 +197,7 @@ var ENGINE_DEFS = [
       var close = candles[i][4];
 
       var zScore = (close - mean) / sd;
-      if (Math.abs(zScore) < 2) return null;
+      if (Math.abs(zScore) < 1.5) return null;
 
       var conf = Math.min(85, 60 + Math.abs(zScore) * 8);
       if (zScore > 2) {
@@ -220,11 +220,11 @@ var ENGINE_DEFS = [
       if (!curATR || curATR === 0) return null;
       var close = candles[i][4];
 
-      // Detect consolidation: current ATR < 60% of 20-bar ATR average
+      // Detect consolidation: current ATR < 85% of 20-bar ATR average
       var atrAvg = 0;
       for (var j = i - 19; j <= i; j++) atrAvg += (ind.atr14[j] || 0);
       atrAvg /= 20;
-      if (curATR > atrAvg * 0.6) return null; // not consolidated enough
+      if (curATR > atrAvg * 0.85) return null; // not consolidated enough
 
       // Range highs/lows over last 20 bars
       var rangeHigh = -Infinity, rangeLow = Infinity;
@@ -287,12 +287,12 @@ var ENGINE_DEFS = [
       var close = candles[i][4];
       var open = candles[i][1];
 
-      // Volume spike > 2x average
-      if (vol < volAvg * 2) return null;
+      // Volume spike > 1.5x average
+      if (vol < volAvg * 1.5) return null;
 
-      // Strong price movement (body > 0.5x ATR)
+      // Strong price movement (body > 0.3x ATR)
       var body = Math.abs(close - open);
-      if (body < curATR * 0.5) return null;
+      if (body < curATR * 0.3) return null;
 
       var conf = Math.min(85, 65 + (vol / volAvg - 2) * 10);
       if (close > open) {
@@ -392,9 +392,9 @@ function computeIndicators(candles, params) {
 function simulate(candles, enabledEngines, capital, params, onProgress) {
   var indicators = computeIndicators(candles, params);
 
-  // Filter engines
+  // Filter engines — match by key OR by name (frontend sends names)
   var engines = ENGINE_DEFS.filter(function (e) {
-    return enabledEngines.indexOf(e.key) !== -1;
+    return enabledEngines.indexOf(e.key) !== -1 || enabledEngines.indexOf(e.name) !== -1;
   });
   if (engines.length === 0) engines = ENGINE_DEFS; // fallback: all
 
@@ -407,10 +407,11 @@ function simulate(candles, enabledEngines, capital, params, onProgress) {
   var dailyMap = {};  // "YYYY-MM-DD" → { pnl, trades }
   var engineStats = {};
   var tradeId = 0;
+  var liquidated = false; // account blown flag
 
-  // Margin per position
+  // Margin per position — use fraction of capital, not full capital
   var maxPositions = MAX_CONCURRENT;
-  var marginPerPos = capital / maxPositions;
+  var marginPerPos = capital * 0.1; // 10% of capital per position (max 50% deployed)
 
   // Init engine stats
   engines.forEach(function (e) {
@@ -422,6 +423,8 @@ function simulate(candles, enabledEngines, capital, params, onProgress) {
   var dailyTradeCount = 0;
 
   for (var i = 0; i < candles.length; i++) {
+    if (liquidated) break;
+
     var candle = candles[i];
     var ts = candle[0];
     var high = candle[2];
@@ -433,6 +436,38 @@ function simulate(candles, enabledEngines, capital, params, onProgress) {
     if (day !== currentDay) {
       currentDay = day;
       dailyTradeCount = 0;
+    }
+
+    // --- Check account liquidation: if total equity < 5% of capital, stop ---
+    var unrealizedPnl = 0;
+    for (var up = 0; up < positions.length; up++) {
+      var uPos = positions[up];
+      var uSize = uPos.margin * DEFAULT_LEVERAGE;
+      var uDiff = uPos.side === "long" ? (close - uPos.entryPrice) : (uPos.entryPrice - close);
+      unrealizedPnl += (uDiff / uPos.entryPrice) * uSize;
+    }
+    var totalEquity = balance + unrealizedPnl;
+    if (totalEquity < capital * 0.05) {
+      // Account blown — force close everything at current price
+      liquidated = true;
+      for (var lp = 0; lp < positions.length; lp++) {
+        var lPos = positions[lp];
+        var lSize = lPos.margin * DEFAULT_LEVERAGE;
+        var lDiff = lPos.side === "long" ? (close - lPos.entryPrice) : (lPos.entryPrice - close);
+        var lPnl = (lDiff / lPos.entryPrice) * lSize - lPos.entryFee - lSize * FEE_RATE;
+        balance += lPos.margin + lPnl;
+        allTrades.push({
+          id: lPos.id, engine: lPos.engine, side: lPos.side,
+          entryPrice: lPos.entryPrice, exitPrice: close,
+          pnl: lPnl, fees: lPos.entryFee + lSize * FEE_RATE,
+          durationMin: (ts - lPos.entryTs) / 60000, exitReason: "liquidation"
+        });
+        var lEs = engineStats[lPos.engineKey];
+        if (lEs) { lEs.count++; lEs.totalPnl += lPnl; if (lPnl > 0) { lEs.wins++; lEs.totalWin += lPnl; } else { lEs.losses++; lEs.totalLoss += Math.abs(lPnl); } }
+      }
+      positions = [];
+      if (!dailyMap[day]) dailyMap[day] = { pnl: 0, trades: 0 };
+      break;
     }
 
     // --- 1. Check open positions for SL/TP ---
@@ -517,8 +552,8 @@ function simulate(candles, enabledEngines, capital, params, onProgress) {
         }
         if (dup) continue;
 
-        // Open position
-        var margin = Math.min(marginPerPos, balance * 0.9);
+        // Open position — margin capped at marginPerPos or 20% of current balance
+        var margin = Math.min(marginPerPos, balance * 0.2);
         if (margin < 1) continue;
         var sizeUsd = margin * DEFAULT_LEVERAGE;
         var entryFee = sizeUsd * FEE_RATE;
@@ -604,19 +639,19 @@ function simulate(candles, enabledEngines, capital, params, onProgress) {
     else grossLoss += Math.abs(t.pnl);
   });
 
-  // Max drawdown
+  // Max drawdown — calculated relative to peak equity, capped at 100%
   var peak = capital;
   var equity = capital;
   var maxDd = 0;
   var maxDdPct = 0;
-  var equityCurve = [];
 
   allTrades.forEach(function (t) {
     equity += t.pnl;
+    if (equity < 0) equity = 0; // can't go below zero
     if (equity > peak) peak = equity;
     var dd = peak - equity;
     if (dd > maxDd) maxDd = dd;
-    var ddPct = peak > 0 ? dd / peak : 0;
+    var ddPct = peak > 0 ? Math.min(1, dd / peak) : 0; // cap at 100%
     if (ddPct > maxDdPct) maxDdPct = ddPct;
   });
 
@@ -768,23 +803,31 @@ self.onmessage = function (event) {
 
     } else {
       // Monte Carlo / Random Search — run N iterations with randomized params,
-      // track the best parameter set by Sharpe, then re-simulate it for full detail.
+      // track the best parameter set by adjusted score, then re-simulate for full detail.
+      // Score = Sharpe × sqrt(trades/10) — penalizes runs with too few trades.
       var fullLeaderboard = [];
-      var bestSharpe = -Infinity;
+      var bestScore = -Infinity;
       var bestParamsFound = null;
+      var MIN_TRADES_FOR_RANK = 5; // ignore runs with fewer trades
 
       for (var iter = 0; iter < iterations; iter++) {
         var params = {
-          slMult: randomBetween(0.5, 3.0),
-          tpRatio: randomBetween(1.0, 4.0),
-          emaPeriodMult: randomBetween(0.7, 1.3),
-          confThreshold: Math.round(randomBetween(55, 85))
+          slMult: randomBetween(0.5, 2.5),
+          tpRatio: randomBetween(1.0, 3.5),
+          emaPeriodMult: randomBetween(0.8, 1.2),
+          confThreshold: Math.round(randomBetween(50, 75))
         };
 
         var result = simulate(candles, enabledEngines, capital, params, null);
 
-        if (result.summary.sharpe > bestSharpe) {
-          bestSharpe = result.summary.sharpe;
+        // Adjusted score: Sharpe weighted by trade count to avoid low-N flukes
+        var tradeCount = result.summary.totalTrades;
+        var adjustedScore = tradeCount >= MIN_TRADES_FOR_RANK
+          ? result.summary.sharpe * Math.min(1, Math.sqrt(tradeCount / 20))
+          : -999;
+
+        if (adjustedScore > bestScore) {
+          bestScore = adjustedScore;
           bestParamsFound = params;
         }
 
@@ -795,7 +838,9 @@ self.onmessage = function (event) {
           sharpe: result.summary.sharpe,
           maxDd: result.summary.maxDrawdown,
           winRate: result.summary.winRate,
-          profitFactor: result.summary.profitFactor
+          profitFactor: result.summary.profitFactor,
+          totalTrades: tradeCount,
+          adjustedScore: adjustedScore
         });
 
         var progress = Math.round((iter + 1) / iterations * 100);
@@ -804,9 +849,10 @@ self.onmessage = function (event) {
         }
       }
 
-      // Sort and take top 10
-      fullLeaderboard.sort(function (a, b) { return b.sharpe - a.sharpe; });
-      var top10 = fullLeaderboard.slice(0, 10).map(function (entry, idx) {
+      // Filter out runs with too few trades, sort by adjusted score, take top 10
+      var ranked = fullLeaderboard.filter(function (e) { return e.totalTrades >= MIN_TRADES_FOR_RANK; });
+      ranked.sort(function (a, b) { return b.adjustedScore - a.adjustedScore; });
+      var top10 = ranked.slice(0, 10).map(function (entry, idx) {
         return {
           rank: idx + 1,
           configHash: entry.configHash,

@@ -147,8 +147,9 @@ contract CollateralManagerTest is Test {
         assertEq(credited, expected);
         assertEq(credited, 33_250 * USDC_UNIT); // $33,250
 
-        // Check vault balance was credited
-        assertEq(vault.balances(alice), credited);
+        // C-5 fix: collateral credits go to collateralBalances
+        assertEq(vault.collateralBalances(alice), credited);
+        assertEq(vault.balanceOf(alice), credited);
 
         // Check token was transferred
         assertEq(cbETH.balanceOf(address(cm)), amount);
@@ -232,14 +233,14 @@ contract CollateralManagerTest is Test {
         vm.prank(alice);
         uint256 credited = cm.depositCollateral(address(cbETH), depositAmount);
 
-        uint256 vaultBefore = vault.balances(alice);
+        uint256 vaultBefore = vault.collateralBalances(alice);
         uint256 tokenBefore = cbETH.balanceOf(alice);
 
         vm.prank(alice);
         cm.withdrawCollateral(address(cbETH), depositAmount);
 
-        // Vault balance should be debited
-        assertEq(vault.balances(alice), vaultBefore - credited);
+        // Vault collateral balance should be debited
+        assertEq(vault.collateralBalances(alice), vaultBefore - credited);
 
         // Tokens returned
         assertEq(cbETH.balanceOf(alice), tokenBefore + depositAmount);
@@ -280,7 +281,8 @@ contract CollateralManagerTest is Test {
     // ============================================================
 
     function test_updatePrice_success() public {
-        uint256 newPrice = 4_000 * USDC_UNIT; // cbETH pumps to $4,000
+        // H-13 fix: price change must be within maxPriceDeviationBps (10%)
+        uint256 newPrice = 3_800 * USDC_UNIT; // cbETH goes from $3,500 to $3,800 (8.57%)
 
         vm.prank(oracleKeeper);
         cm.updatePrice(address(cbETH), newPrice);
@@ -296,15 +298,15 @@ contract CollateralManagerTest is Test {
     }
 
     function test_updatePrice_affectsNewDeposits() public {
-        // Price goes up to $4,000
+        // H-13 fix: price change within 10% deviation
         vm.prank(oracleKeeper);
-        cm.updatePrice(address(cbETH), 4_000 * USDC_UNIT);
+        cm.updatePrice(address(cbETH), 3_800 * USDC_UNIT); // $3,500 → $3,800 (8.57%)
 
         vm.prank(alice);
         uint256 credited = cm.depositCollateral(address(cbETH), 10 * ETH_UNIT);
 
-        // credit = 10e18 * 4000e6 * 9500 / (1e18 * 10000) = 38,000e6
-        assertEq(credited, 38_000 * USDC_UNIT);
+        // credit = 10e18 * 3800e6 * 9500 / (1e18 * 10000) = 36,100e6
+        assertEq(credited, 36_100 * USDC_UNIT);
     }
 
     // ============================================================
@@ -439,13 +441,13 @@ contract CollateralManagerTest is Test {
         vm.prank(alice);
         cm.depositCollateral(address(cbETH), 10 * ETH_UNIT);
 
-        // Price goes up
+        // H-13 fix: price change within 10% deviation
         vm.prank(oracleKeeper);
-        cm.updatePrice(address(cbETH), 4_000 * USDC_UNIT);
+        cm.updatePrice(address(cbETH), 3_800 * USDC_UNIT); // $3,500 → $3,800
 
         (uint256 amt, uint256 credited, uint256 currentVal) = cm.getTraderCollateral(address(cbETH), alice);
         assertEq(amt, 10 * ETH_UNIT);
-        assertEq(credited, 33_250 * USDC_UNIT); // at old price
-        assertEq(currentVal, 38_000 * USDC_UNIT); // at new price: 10 * 4000 * 0.95
+        assertEq(credited, 33_250 * USDC_UNIT); // at old price: 10 * 3500 * 0.95
+        assertEq(currentVal, 36_100 * USDC_UNIT); // at new price: 10 * 3800 * 0.95
     }
 }

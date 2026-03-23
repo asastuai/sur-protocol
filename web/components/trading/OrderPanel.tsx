@@ -1,13 +1,13 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useTrading } from "@/providers/TradingProvider";
 import { useAccount, useWalletClient } from "wagmi";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
 import { toPrice, toSize, fmtPrice, CONTRACTS, CHAIN, EIP712_DOMAIN, ORDER_TYPES, getMaxLeverageForSize, calculateTieredMargin, MARKET_RISK_CONFIGS } from "@/lib/constants";
 import { type Hex } from "viem";
 
-type OrderType = "limit" | "market" | "stopLimit";
+type OrderType = "limit" | "market" | "stopLimit" | "stopMarket" | "oco";
 type TIF = "GTC" | "IOC" | "FOK" | "PostOnly";
 
 export function OrderPanel() {
@@ -110,23 +110,53 @@ export function OrderPanel() {
           tp: tpVal,
           sl: slVal,
         });
-      } else {
-        if (numPrice <= 0) return;
+      } else if (orderType === "stopMarket") {
+        const stopPx = parseFloat(triggerPrice);
+        if (!stopPx || stopPx <= 0) return;
         dispatch({
           type: "PAPER_LIMIT_ORDER",
-          market: market.name,
-          marketId: market.id,
-          side,
-          price: numPrice,
-          size: numSize,
-          leverage,
-          tp: tpVal,
-          sl: slVal,
+          market: market.name, marketId: market.id, side,
+          price: 0, size: numSize, leverage,
+          orderType: "stopMarket", stopPrice: stopPx,
+          tp: tpVal, sl: slVal,
+        });
+      } else if (orderType === "oco") {
+        // OCO = TP limit + SL stop market, linked by group ID
+        const tpPx = parseFloat(tp);
+        const slPx = parseFloat(triggerPrice);
+        if (!tpPx || !slPx || tpPx <= 0 || slPx <= 0 || !numSize) return;
+        const groupId = `oco_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+        const closeSide = side === "buy" ? "sell" as const : "buy" as const;
+        // TP: limit order at take profit price
+        dispatch({
+          type: "PAPER_LIMIT_ORDER",
+          market: market.name, marketId: market.id, side: closeSide,
+          price: tpPx, size: numSize, leverage,
+          orderType: "limit", ocoGroupId: groupId,
+        });
+        // SL: stop market at stop loss trigger
+        dispatch({
+          type: "PAPER_LIMIT_ORDER",
+          market: market.name, marketId: market.id, side: closeSide,
+          price: 0, size: numSize, leverage,
+          orderType: "stopMarket", stopPrice: slPx, ocoGroupId: groupId,
+        });
+      } else {
+        // Limit or stop limit
+        if (numPrice <= 0) return;
+        const stopPx = orderType === "stopLimit" ? parseFloat(triggerPrice) || undefined : undefined;
+        dispatch({
+          type: "PAPER_LIMIT_ORDER",
+          market: market.name, marketId: market.id, side,
+          price: numPrice, size: numSize, leverage,
+          tp: tpVal, sl: slVal,
+          ...(stopPx ? { orderType: "stopLimit" as const, stopPrice: stopPx } : {}),
         });
       }
       setSize("");
       setTp("");
       setSl("");
+      setTriggerPrice("");
       setTimeout(() => dispatch({ type: "CLEAR_ORDER_STATUS" }), 3000);
       return;
     }
@@ -208,6 +238,31 @@ export function OrderPanel() {
     setSize(maxSize.toFixed(4));
   };
 
+  // ---- Keyboard Shortcuts ----
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const el = document.activeElement;
+      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || (el as HTMLElement).isContentEditable)) return;
+
+      switch (e.key.toLowerCase()) {
+        case "b": setSide("buy"); e.preventDefault(); break;
+        case "s": setSide("sell"); e.preventDefault(); break;
+        case "m": setOrderType("market"); e.preventDefault(); break;
+        case "l": setOrderType("limit"); e.preventDefault(); break;
+        case "1": setSizePct(25); e.preventDefault(); break;
+        case "2": setSizePct(50); e.preventDefault(); break;
+        case "3": setSizePct(75); e.preventDefault(); break;
+        case "4": setSizePct(100); e.preventDefault(); break;
+        case "enter":
+          if (!e.ctrlKey && !e.metaKey) { handleSubmit(); e.preventDefault(); }
+          break;
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [numPrice, leverage, balance, numSize, state.paperMode, state.markPrice]);
+
   const leveragePresets = [1, 2, 5, 10, 20];
 
   const tifOptions: { key: TIF; label: string; tip: string }[] = [
@@ -227,6 +282,8 @@ export function OrderPanel() {
       <div className="grid grid-cols-2 p-2 gap-1.5">
         <button
           onClick={() => setSide("buy")}
+          aria-pressed={isLong}
+          aria-label="Long (buy)"
           className={`py-2 rounded text-xs font-semibold transition-all ${
             isLong
               ? "bg-sur-green/15 text-sur-green border border-sur-green/30"
@@ -237,6 +294,8 @@ export function OrderPanel() {
         </button>
         <button
           onClick={() => setSide("sell")}
+          aria-pressed={!isLong}
+          aria-label="Short (sell)"
           className={`py-2 rounded text-xs font-semibold transition-all ${
             !isLong
               ? "bg-sur-red/15 text-sur-red border border-sur-red/30"
@@ -249,11 +308,13 @@ export function OrderPanel() {
 
       <div className="px-3 pb-1 flex flex-col gap-2.5">
         {/* Order Type */}
-        <div className="flex gap-1">
+        <div className="flex gap-1 flex-wrap">
           {([
             { key: "limit" as OrderType, label: "Limit" },
             { key: "market" as OrderType, label: "Market" },
+            { key: "stopMarket" as OrderType, label: "Stop" },
             { key: "stopLimit" as OrderType, label: "Stop Limit" },
+            ...(state.paperMode ? [{ key: "oco" as OrderType, label: "OCO" }] : []),
           ]).map((t) => (
             <button
               key={t.key}
@@ -271,13 +332,15 @@ export function OrderPanel() {
 
         {/* Time in Force */}
         <div>
-          <label className="text-[9px] text-sur-muted font-medium uppercase tracking-wider">Time in Force</label>
-          <div className="flex gap-1 mt-1">
+          <span className="text-[9px] text-sur-muted font-medium uppercase tracking-wider" id="tif-label">Time in Force</span>
+          <div role="group" aria-labelledby="tif-label" className="flex gap-1 mt-1">
             {tifOptions.map((t) => (
               <button
                 key={t.key}
                 onClick={() => setTif(t.key)}
                 title={t.tip}
+                aria-pressed={tif === t.key}
+                aria-label={t.tip}
                 className={`flex-1 py-1 rounded text-[9px] font-medium transition-all ${
                   tif === t.key
                     ? "bg-sur-accent/15 text-sur-accent border border-sur-accent/30"
@@ -290,62 +353,91 @@ export function OrderPanel() {
           </div>
         </div>
 
-        {/* Trigger Price (Stop Limit only) */}
-        {orderType === "stopLimit" && (
+        {/* Trigger Price (Stop orders) */}
+        {(orderType === "stopLimit" || orderType === "stopMarket") && (
           <div>
-            <label className="text-[9px] text-sur-muted font-medium uppercase tracking-wider">Trigger Price</label>
+            <label htmlFor="input-trigger-price" className="text-[9px] text-sur-muted font-medium uppercase tracking-wider">Trigger Price</label>
             <div className="mt-1 relative">
               <input
+                id="input-trigger-price"
                 type="number"
                 value={triggerPrice}
                 onChange={(e) => setTriggerPrice(e.target.value)}
                 placeholder="0.00"
+                aria-label="Trigger price in USD"
                 className="w-full bg-sur-bg border border-sur-border rounded px-2.5 py-1.5 text-[11px] tabular-nums focus:border-sur-accent/50 outline-none transition-colors"
               />
-              <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[9px] text-sur-muted">USD</span>
+              <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[9px] text-sur-muted" aria-hidden="true">USD</span>
             </div>
           </div>
         )}
 
-        {/* Price (not for market orders) */}
-        {orderType !== "market" && (
+        {/* OCO: TP Price + SL Trigger */}
+        {orderType === "oco" && (
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label htmlFor="input-oco-tp" className="text-[9px] text-sur-green font-medium uppercase tracking-wider">TP Price</label>
+              <div className="mt-1 relative">
+                <input id="input-oco-tp" type="number" value={tp} onChange={(e) => setTp(e.target.value)} placeholder="0.00"
+                  aria-label="Take profit price in USD"
+                  className="w-full bg-sur-bg border border-sur-border rounded px-2 py-1.5 text-[10px] tabular-nums focus:border-sur-green/40 outline-none" />
+              </div>
+            </div>
+            <div>
+              <label htmlFor="input-oco-sl" className="text-[9px] text-sur-red font-medium uppercase tracking-wider">SL Trigger</label>
+              <div className="mt-1 relative">
+                <input id="input-oco-sl" type="number" value={triggerPrice} onChange={(e) => setTriggerPrice(e.target.value)} placeholder="0.00"
+                  aria-label="Stop loss trigger price in USD"
+                  className="w-full bg-sur-bg border border-sur-border rounded px-2 py-1.5 text-[10px] tabular-nums focus:border-sur-red/40 outline-none" />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Price (not for market/stopMarket/oco orders) */}
+        {!["market", "stopMarket", "oco"].includes(orderType) && (
           <div>
-            <label className="text-[9px] text-sur-muted font-medium uppercase tracking-wider">
+            <label htmlFor="input-price" className="text-[9px] text-sur-muted font-medium uppercase tracking-wider">
               {orderType === "stopLimit" ? "Limit Price" : "Price"}
             </label>
             <div className="mt-1 relative">
               <input
+                id="input-price"
                 type="number"
                 value={price}
                 onChange={(e) => setPrice(e.target.value)}
                 placeholder="0.00"
+                aria-label={orderType === "stopLimit" ? "Limit price in USD" : "Price in USD"}
                 className="w-full bg-sur-bg border border-sur-border rounded px-2.5 py-1.5 text-[11px] tabular-nums focus:border-sur-accent/50 outline-none transition-colors"
               />
-              <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[9px] text-sur-muted">USD</span>
+              <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[9px] text-sur-muted" aria-hidden="true">USD</span>
             </div>
           </div>
         )}
 
         {/* Size */}
         <div>
-          <label className="text-[9px] text-sur-muted font-medium uppercase tracking-wider">Size</label>
+          <label htmlFor="input-size" className="text-[9px] text-sur-muted font-medium uppercase tracking-wider">Size</label>
           <div className="mt-1 relative">
             <input
+              id="input-size"
               type="number"
               value={size}
               onChange={(e) => setSize(e.target.value)}
               placeholder="0.00"
+              aria-label={`Order size in ${market.baseAsset}`}
               className="w-full bg-sur-bg border border-sur-border rounded px-2.5 py-1.5 text-[11px] tabular-nums focus:border-sur-accent/50 outline-none transition-colors"
             />
-            <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[9px] text-sur-muted">
+            <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[9px] text-sur-muted" aria-hidden="true">
               {market.baseAsset}
             </span>
           </div>
-          <div className="flex gap-1 mt-1.5">
+          <div className="flex gap-1 mt-1.5" role="group" aria-label="Set size as percentage of available balance">
             {[10, 25, 50, 75, 100].map((pct) => (
               <button
                 key={pct}
                 onClick={() => setSizePct(pct)}
+                aria-label={`Set size to ${pct}% of available balance`}
                 className="flex-1 text-[9px] py-0.5 rounded bg-sur-border/30 text-sur-muted hover:text-sur-text hover:bg-sur-border transition-colors"
               >
                 {pct}%
@@ -357,22 +449,30 @@ export function OrderPanel() {
         {/* Leverage */}
         <div>
           <div className="flex justify-between items-center">
-            <label className="text-[9px] text-sur-muted font-medium uppercase tracking-wider">Leverage</label>
-            <span className="text-[11px] font-semibold tabular-nums">{leverage}x</span>
+            <label htmlFor="input-leverage" className="text-[9px] text-sur-muted font-medium uppercase tracking-wider">Leverage</label>
+            <span className="text-[11px] font-semibold tabular-nums" aria-live="polite" aria-atomic="true">{leverage}x</span>
           </div>
           <input
+            id="input-leverage"
             type="range"
             min={1}
             max={effectiveMaxLev}
             value={Math.min(leverage, effectiveMaxLev)}
             onChange={(e) => setLeverage(parseInt(e.target.value))}
+            aria-label={`Leverage: ${leverage}x (max ${effectiveMaxLev}x)`}
+            aria-valuemin={1}
+            aria-valuemax={effectiveMaxLev}
+            aria-valuenow={Math.min(leverage, effectiveMaxLev)}
+            aria-valuetext={`${leverage}x leverage`}
             className="w-full mt-1 h-1 appearance-none bg-sur-border rounded-full cursor-pointer accent-sur-accent"
           />
-          <div className="flex justify-between mt-1">
+          <div className="flex justify-between mt-1" role="group" aria-label="Leverage presets">
             {leveragePresets.filter(l => l <= effectiveMaxLev).map((l) => (
               <button
                 key={l}
                 onClick={() => setLeverage(l)}
+                aria-pressed={leverage === l}
+                aria-label={`Set leverage to ${l}x`}
                 className={`text-[9px] px-1.5 py-0.5 rounded transition-colors ${
                   leverage === l
                     ? "bg-sur-accent/20 text-sur-accent"
@@ -409,6 +509,38 @@ export function OrderPanel() {
               <span className="tabular-nums">{val}</span>
             </div>
           ))}
+          {/* Funding Rate */}
+          <div className="flex justify-between text-[10px]">
+            <span className="text-sur-muted">Funding Rate</span>
+            <span className={`tabular-nums font-medium ${
+              state.fundingRate > 0 ? "text-sur-green" : state.fundingRate < 0 ? "text-sur-red" : "text-sur-muted"
+            }`}>
+              {state.fundingRate !== 0
+                ? `${state.fundingRate > 0 ? "+" : ""}${state.fundingRate.toFixed(4)}%`
+                : "—"}
+            </span>
+          </div>
+          {state.fundingRate !== 0 && numSize > 0 && (
+            <div className="flex justify-between text-[10px]">
+              <span className="text-sur-muted">Est. Funding/8h</span>
+              <span className={`tabular-nums ${
+                (isLong ? state.fundingRate : -state.fundingRate) >= 0 ? "text-sur-red" : "text-sur-green"
+              }`}>
+                {(() => {
+                  const cost = notional * Math.abs(state.fundingRate / 100);
+                  const pays = isLong ? state.fundingRate > 0 : state.fundingRate < 0;
+                  return `${pays ? "-" : "+"}$${cost.toFixed(2)}`;
+                })()}
+              </span>
+            </div>
+          )}
+          {/* Est. Liq Price */}
+          {liqEst > 0 && (
+            <div className="flex justify-between text-[10px]">
+              <span className="text-sur-muted">Est. Liq. Price</span>
+              <span className="tabular-nums text-sur-red">${liqEst.toLocaleString("en", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+            </div>
+          )}
         </div>
 
         {/* ===== SUBMIT BUTTON ===== */}
@@ -444,22 +576,26 @@ export function OrderPanel() {
         {/* TP / SL (below button, collapsible) */}
         <div className="grid grid-cols-2 gap-2">
           <div>
-            <label className="text-[9px] text-sur-green font-medium uppercase tracking-wider">TP</label>
+            <label htmlFor="input-tp" className="text-[9px] text-sur-green font-medium uppercase tracking-wider">TP</label>
             <input
+              id="input-tp"
               type="number"
               value={tp}
               onChange={(e) => setTp(e.target.value)}
               placeholder="—"
+              aria-label="Take profit price"
               className="w-full mt-0.5 bg-sur-bg border border-sur-border rounded px-2 py-1 text-[10px] tabular-nums focus:border-sur-green/40 outline-none"
             />
           </div>
           <div>
-            <label className="text-[9px] text-sur-red font-medium uppercase tracking-wider">SL</label>
+            <label htmlFor="input-sl" className="text-[9px] text-sur-red font-medium uppercase tracking-wider">SL</label>
             <input
+              id="input-sl"
               type="number"
               value={sl}
               onChange={(e) => setSl(e.target.value)}
               placeholder="—"
+              aria-label="Stop loss price"
               className="w-full mt-0.5 bg-sur-bg border border-sur-border rounded px-2 py-1 text-[10px] tabular-nums focus:border-sur-red/40 outline-none"
             />
           </div>
@@ -467,37 +603,50 @@ export function OrderPanel() {
 
         {/* Reduce Only + Hidden Order */}
         <div className="flex items-center gap-4">
-          <label className="flex items-center gap-2 cursor-pointer">
-            <div
-              onClick={() => setReduceOnly(!reduceOnly)}
-              className={`w-3.5 h-3.5 rounded border flex items-center justify-center transition-all cursor-pointer ${
+          <button
+            type="button"
+            role="checkbox"
+            aria-checked={reduceOnly}
+            onClick={() => setReduceOnly(!reduceOnly)}
+            className="flex items-center gap-2 cursor-pointer bg-transparent border-0 p-0"
+          >
+            <span
+              aria-hidden="true"
+              className={`w-3.5 h-3.5 rounded border flex items-center justify-center transition-all ${
                 reduceOnly
                   ? "border-sur-accent bg-sur-accent/20"
                   : "border-sur-border"
               }`}
             >
               {reduceOnly && <span className="text-[8px] text-sur-accent">✓</span>}
-            </div>
+            </span>
             <span className="text-[10px] text-sur-muted">Reduce Only</span>
-          </label>
+          </button>
 
           {orderType === "limit" && (
-            <label className="flex items-center gap-2 cursor-pointer group relative">
-              <div
-                onClick={() => setHidden(!hidden)}
-                className={`w-3.5 h-3.5 rounded border flex items-center justify-center transition-all cursor-pointer ${
+            <button
+              type="button"
+              role="checkbox"
+              aria-checked={hidden}
+              onClick={() => setHidden(!hidden)}
+              title="Hidden orders don't appear on the public orderbook. They still match normally but protect your strategy from being front-run."
+              className="flex items-center gap-2 cursor-pointer bg-transparent border-0 p-0 group relative"
+            >
+              <span
+                aria-hidden="true"
+                className={`w-3.5 h-3.5 rounded border flex items-center justify-center transition-all ${
                   hidden
                     ? "border-purple-500 bg-purple-500/20"
                     : "border-sur-border"
                 }`}
               >
                 {hidden && <span className="text-[8px] text-purple-400">✓</span>}
-              </div>
+              </span>
               <span className={`text-[10px] ${hidden ? "text-purple-400" : "text-sur-muted"}`}>Hidden</span>
-              <div className="absolute bottom-full left-0 mb-1 hidden group-hover:block w-44 p-2 bg-[#252836] border border-sur-border rounded text-[9px] text-sur-muted z-50">
+              <span className="absolute bottom-full left-0 mb-1 hidden group-hover:block w-44 p-2 bg-[#28282e] border border-sur-border rounded text-[9px] text-sur-muted z-50" aria-hidden="true">
                 Hidden orders don&apos;t appear on the public orderbook. They still match normally but protect your strategy from being front-run.
-              </div>
-            </label>
+              </span>
+            </button>
           )}
         </div>
       </div>

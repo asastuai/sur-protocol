@@ -1,28 +1,12 @@
 /**
  * SUR Protocol - Trading Provider
  *
- * Top-level context that:
- * 1. Manages WebSocket connection to the API server
- * 2. Dispatches incoming messages to the trading store
- * 3. Provides state + actions to all child components
+ * Manages side effects (WebSocket, Binance feed, localStorage persistence)
+ * and bridges them to the Zustand store.
  *
- * Architecture:
- *
- *   <TradingProvider>
- *     │
- *     ├─ WebSocket connection to ws://localhost:3002
- *     │    ├─ onMessage → parse → dispatch(action)
- *     │    └─ send() exposed for order submission
- *     │
- *     ├─ useTradingStore() → [state, dispatch]
- *     │
- *     └─ Context.Provider value={state, dispatch, send, ...}
- *          ├─ <Header />
- *          ├─ <Chart />
- *          ├─ <Orderbook />     ← reads state.bids, state.asks
- *          ├─ <OrderPanel />    ← calls submitOrder() via send()
- *          ├─ <PositionsPanel/> ← reads state.positions
- *          └─ <RecentTrades />  ← reads state.recentTrades
+ * Components can use either:
+ *   - useTrading() for the legacy context API (state, dispatch, send, market)
+ *   - useTradingZustand(selector) for optimized Zustand subscriptions
  */
 
 "use client";
@@ -36,8 +20,12 @@ import {
   type ReactNode,
 } from "react";
 import {
-  useTradingStore,
+  useTradingZustand,
+  type PriceLevel,
+} from "../lib/trading-zustand";
+import {
   type TradingState,
+  type TradingAction,
   type TradingDispatch,
 } from "../lib/trading-store";
 import { WS_URL, fromPrice, fromSize, MARKETS, DEFAULT_MARKET, BINANCE_SYMBOLS, BINANCE_WS_URL, type MarketMeta } from "../lib/constants";
@@ -45,7 +33,7 @@ import { WS_URL, fromPrice, fromSize, MARKETS, DEFAULT_MARKET, BINANCE_SYMBOLS, 
 const PAPER_STORAGE_KEY = "sur_paper_trading_v1";
 
 // ============================================================
-//                    CONTEXT TYPE
+//                    CONTEXT (legacy bridge)
 // ============================================================
 
 interface TradingContextValue {
@@ -63,14 +51,48 @@ const TradingContext = createContext<TradingContextValue | null>(null);
 // ============================================================
 
 export function TradingProvider({ children }: { children: ReactNode }) {
-  const [state, dispatch] = useTradingStore();
+  const store = useTradingZustand();
+  const actions = store.actions;
   const wsRef = useRef<WebSocket | null>(null);
   const retriesRef = useRef(0);
   const maxRetries = 5;
   const reconnectMs = 5000;
 
-  // Current market
-  const market = MARKETS.find(m => m.name === state.selectedMarket) || DEFAULT_MARKET;
+  const market = MARKETS.find(m => m.name === store.selectedMarket) || DEFAULT_MARKET;
+
+  // ---- Dispatch bridge (maps old reducer actions to Zustand) ----
+  const dispatch: TradingDispatch = useCallback((action: TradingAction) => {
+    const a = useTradingZustand.getState().actions;
+    switch (action.type) {
+      case "SET_WS_STATUS": a.setWsStatus(action.status); break;
+      case "SET_MARKET": a.setMarket(action.market); break;
+      case "SET_ORDERBOOK_SNAPSHOT":
+      case "UPDATE_ORDERBOOK": a.updateOrderbook(action.bids as any, action.asks as any); break;
+      case "ADD_TRADE": a.addTrade(action.trade as any); break;
+      case "SET_TRADES": a.setTrades(action.trades as any); break;
+      case "UPDATE_MARK_PRICE": a.updateMarkPrice(action.price); break;
+      case "SET_POSITIONS": a.setPositions(action.positions as any); break;
+      case "SET_OPEN_ORDERS": a.setOpenOrders(action.orders as any); break;
+      case "SET_VAULT_BALANCE": a.setVaultBalance(action.balance); break;
+      case "ORDER_ACCEPTED": a.orderAccepted(action.orderId, action.status); break;
+      case "ORDER_REJECTED": a.orderRejected(action.orderId, action.reason); break;
+      case "ORDER_CANCELLED": a.orderCancelled(action.orderId); break;
+      case "INCREMENT_NONCE": a.incrementNonce(); break;
+      case "CLEAR_ORDER_STATUS": a.clearOrderStatus(); break;
+      case "SET_MARKET_STATS": a.setMarketStats(action); break;
+      case "PAPER_MARKET_ORDER": a.paperMarketOrder(action); break;
+      case "PAPER_LIMIT_ORDER": a.paperLimitOrder(action); break;
+      case "PAPER_CLOSE_POSITION": a.paperClosePosition(action.positionId, action.closePrice, action.feeBps); break;
+      case "PAPER_CANCEL_ORDER": a.paperCancelOrder(action.orderId); break;
+      case "PAPER_UPDATE_TPSL": a.paperUpdateTpSl(action.positionId, action.tp, action.sl); break;
+      case "PAPER_FILL_LIMIT": a.paperFillLimit(action.orderId, action.fillPrice, action.feeBps); break;
+      case "PAPER_DEPOSIT": a.paperDeposit(action.amount); break;
+      case "PAPER_WITHDRAW": a.paperWithdraw(action.amount); break;
+      case "PAPER_RESET": a.paperReset(); break;
+      case "PAPER_LOAD": a.paperLoad(action.state as any); break;
+      case "TOGGLE_PAPER_MODE": a.togglePaperMode(); break;
+    }
+  }, []);
 
   // ---- WebSocket Send ----
   const send = useCallback((data: any) => {
@@ -83,98 +105,78 @@ export function TradingProvider({ children }: { children: ReactNode }) {
 
   // ---- Message Handler ----
   const handleMessage = useCallback((msg: any) => {
+    const a = useTradingZustand.getState().actions;
     switch (msg.type) {
-      case "pong":
+      case "pong": break;
+      case "orderbook":
+        a.updateOrderbook(
+          parseLevels(msg.snapshot?.bids || []),
+          parseLevels(msg.snapshot?.asks || []),
+        );
         break;
-
-      case "orderbook": {
-        const bids = parseLevels(msg.snapshot?.bids || []);
-        const asks = parseLevels(msg.snapshot?.asks || []);
-        dispatch({ type: "SET_ORDERBOOK_SNAPSHOT", bids, asks });
+      case "orderbookUpdate":
+        a.updateOrderbook(
+          parseLevels(msg.bids || []),
+          parseLevels(msg.asks || []),
+        );
         break;
-      }
-
-      case "orderbookUpdate": {
-        const bids = parseLevels(msg.bids || []);
-        const asks = parseLevels(msg.asks || []);
-        dispatch({ type: "UPDATE_ORDERBOOK", bids, asks });
-        break;
-      }
-
       case "trade": {
         const t = msg.trade;
-        dispatch({
-          type: "ADD_TRADE",
-          trade: {
-            id: t.id,
-            price: fromPrice(t.price),
-            size: fromSize(t.size),
-            side: t.makerSide === "sell" ? "buy" : "sell", // taker's side
-            time: new Date(t.timestamp).toLocaleTimeString("en", { hour12: false }),
-            timestamp: t.timestamp,
-          },
+        a.addTrade({
+          id: t.id,
+          price: fromPrice(t.price),
+          size: fromSize(t.size),
+          side: t.makerSide === "sell" ? "buy" : "sell",
+          time: new Date(t.timestamp).toLocaleTimeString("en", { hour12: false }),
+          timestamp: t.timestamp,
         });
         break;
       }
-
       case "orderAccepted":
-        dispatch({ type: "ORDER_ACCEPTED", orderId: msg.orderId, status: msg.status });
-        // Auto-clear after 3s
-        setTimeout(() => dispatch({ type: "CLEAR_ORDER_STATUS" }), 3000);
+        a.orderAccepted(msg.orderId, msg.status);
+        setTimeout(() => a.clearOrderStatus(), 3000);
         break;
-
       case "orderRejected":
-        dispatch({ type: "ORDER_REJECTED", orderId: msg.orderId, reason: msg.reason });
-        setTimeout(() => dispatch({ type: "CLEAR_ORDER_STATUS" }), 5000);
+        a.orderRejected(msg.orderId, msg.reason);
+        setTimeout(() => a.clearOrderStatus(), 5000);
         break;
-
       case "orderCancelled":
-        dispatch({ type: "ORDER_CANCELLED", orderId: msg.orderId });
+        a.orderCancelled(msg.orderId);
         break;
-
       case "error":
         console.warn("[WS] Server error:", msg.message);
         break;
     }
-  }, [dispatch]);
+  }, []);
 
   // ---- WebSocket Connection ----
   const connect = useCallback(() => {
-    // Skip WS connection if no URL configured (paper-trading-only mode)
     if (!WS_URL || WS_URL === "ws://localhost:3002" && typeof window !== "undefined" && window.location.hostname !== "localhost") {
-      dispatch({ type: "SET_WS_STATUS", status: "disconnected" });
+      actions.setWsStatus("disconnected");
       return;
     }
     if (wsRef.current?.readyState === WebSocket.OPEN) return;
 
-    dispatch({ type: "SET_WS_STATUS", status: "connecting" });
+    actions.setWsStatus("connecting");
     const ws = new WebSocket(WS_URL);
 
     ws.onopen = () => {
-      dispatch({ type: "SET_WS_STATUS", status: "connected" });
+      actions.setWsStatus("connected");
       retriesRef.current = 0;
 
-      // Subscribe to current market channels
       ws.send(JSON.stringify({
         type: "subscribe",
-        channels: [
-          `orderbook:${market.id}`,
-          `trades:${market.id}`,
-        ],
+        channels: [`orderbook:${market.id}`, `trades:${market.id}`],
       }));
 
-      // Heartbeat
       const heartbeat = setInterval(() => {
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: "ping" }));
-        }
+        if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "ping" }));
       }, 15000);
 
       ws.onclose = () => {
         clearInterval(heartbeat);
-        dispatch({ type: "SET_WS_STATUS", status: "disconnected" });
+        actions.setWsStatus("disconnected");
         wsRef.current = null;
-
         if (retriesRef.current < maxRetries) {
           retriesRef.current++;
           setTimeout(connect, reconnectMs);
@@ -183,42 +185,36 @@ export function TradingProvider({ children }: { children: ReactNode }) {
     };
 
     ws.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        handleMessage(data);
-      } catch {}
+      try { handleMessage(JSON.parse(event.data)); } catch {}
     };
 
-    ws.onerror = () => {
-      dispatch({ type: "SET_WS_STATUS", status: "error" });
-    };
-
+    ws.onerror = () => { actions.setWsStatus("error"); };
     wsRef.current = ws;
-  }, [dispatch, handleMessage, market.id]);
+  }, [actions, handleMessage, market.id]);
 
-  // Connect on mount
   useEffect(() => {
     connect();
     return () => {
-      retriesRef.current = maxRetries; // prevent reconnect on unmount
+      retriesRef.current = maxRetries;
       wsRef.current?.close();
     };
   }, [connect]);
 
-  // ---- Load paper mode preference from localStorage ----
+  // ---- Load paper mode preference ----
   useEffect(() => {
     try {
       const savedMode = localStorage.getItem("sur_paper_mode");
-      if (savedMode === "true" && !state.paperMode) {
-        dispatch({ type: "TOGGLE_PAPER_MODE" });
+      if (savedMode === "true" && !useTradingZustand.getState().paperMode) {
+        actions.togglePaperMode();
       }
     } catch {}
-  }, []);
+  }, [actions]);
 
   // ---- Save paper mode preference ----
+  const paperMode = useTradingZustand(s => s.paperMode);
   useEffect(() => {
-    try { localStorage.setItem("sur_paper_mode", String(state.paperMode)); } catch {}
-  }, [state.paperMode]);
+    try { localStorage.setItem("sur_paper_mode", String(paperMode)); } catch {}
+  }, [paperMode]);
 
   // ---- Paper Trading: Load from localStorage ----
   useEffect(() => {
@@ -226,35 +222,35 @@ export function TradingProvider({ children }: { children: ReactNode }) {
       const saved = localStorage.getItem(PAPER_STORAGE_KEY);
       if (saved) {
         const parsed = JSON.parse(saved);
-        // Skip loading if there are broken positions with price 0
         const hasValid = !parsed.paperPositions?.some((p: any) => p.entryPrice <= 0);
-        // Skip loading if balances are all zero with no positions (broken state)
         const isEmpty = (parsed.paperWalletBalance ?? 0) <= 0
           && (parsed.paperBalance ?? 0) <= 0
           && (!parsed.paperPositions || parsed.paperPositions.length === 0);
         if (hasValid && !isEmpty) {
-          dispatch({ type: "PAPER_LOAD", state: parsed });
+          actions.paperLoad(parsed);
         } else {
-          // Reset broken state
           localStorage.removeItem(PAPER_STORAGE_KEY);
         }
       }
     } catch {}
-  }, [dispatch]);
+  }, [actions]);
 
   // ---- Paper Trading: Save to localStorage ----
+  const paperWalletBalance = useTradingZustand(s => s.paperWalletBalance);
+  const paperBalance = useTradingZustand(s => s.paperBalance);
+  const paperPositions = useTradingZustand(s => s.paperPositions);
+  const paperOrders = useTradingZustand(s => s.paperOrders);
+  const paperTradeHistory = useTradingZustand(s => s.paperTradeHistory);
+  const paperTotalRealizedPnl = useTradingZustand(s => s.paperTotalRealizedPnl);
+
   useEffect(() => {
     try {
       localStorage.setItem(PAPER_STORAGE_KEY, JSON.stringify({
-        paperWalletBalance: state.paperWalletBalance,
-        paperBalance: state.paperBalance,
-        paperPositions: state.paperPositions,
-        paperOrders: state.paperOrders,
-        paperTradeHistory: state.paperTradeHistory,
-        paperTotalRealizedPnl: state.paperTotalRealizedPnl,
+        paperWalletBalance, paperBalance, paperPositions,
+        paperOrders, paperTradeHistory, paperTotalRealizedPnl,
       }));
     } catch {}
-  }, [state.paperWalletBalance, state.paperBalance, state.paperPositions, state.paperOrders, state.paperTradeHistory, state.paperTotalRealizedPnl]);
+  }, [paperWalletBalance, paperBalance, paperPositions, paperOrders, paperTradeHistory, paperTotalRealizedPnl]);
 
   // ---- Real-time price from Binance WebSocket ----
   const binanceWsRef = useRef<WebSocket | null>(null);
@@ -269,44 +265,34 @@ export function TradingProvider({ children }: { children: ReactNode }) {
 
     try {
       ws = new WebSocket(url);
-
       ws.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
           const price = parseFloat(data.p);
-          const size = parseFloat(data.q);
           if (price <= 0) return;
-
-          // Throttle price updates to ~4/sec
           if (price !== lastPrice && !priceThrottle) {
             lastPrice = price;
-            dispatch({ type: "UPDATE_MARK_PRICE", price });
+            useTradingZustand.getState().actions.updateMarkPrice(price);
             priceThrottle = setTimeout(() => { priceThrottle = null; }, 250);
           }
-
-          // Note: Binance aggTrades are NOT SUR protocol trades.
-          // Recent trades list only shows actual SUR protocol trades (from our WS backend).
-          // We only use Binance for the mark price feed.
         } catch {}
       };
 
       ws.onerror = () => {
-        // Fallback: fetch price via REST if WS fails
         fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${symbol.toUpperCase()}`)
           .then(r => r.json())
           .then(data => {
             const price = parseFloat(data.price);
-            if (price > 0) dispatch({ type: "UPDATE_MARK_PRICE", price });
+            if (price > 0) useTradingZustand.getState().actions.updateMarkPrice(price);
           })
           .catch(() => {});
       };
 
       binanceWsRef.current = ws;
     } catch {
-      // Fallback seed price if Binance is completely unreachable
-      if (state.markPrice <= 0) {
+      if (useTradingZustand.getState().markPrice <= 0) {
         const basePrice = market.name === "ETH-USD" ? 2500 : 100000;
-        dispatch({ type: "UPDATE_MARK_PRICE", price: basePrice });
+        actions.updateMarkPrice(basePrice);
       }
     }
 
@@ -315,9 +301,9 @@ export function TradingProvider({ children }: { children: ReactNode }) {
       try { ws?.close(); } catch {}
       binanceWsRef.current = null;
     };
-  }, [market.name, dispatch]);
+  }, [market.name, actions]);
 
-  // ---- Fetch 24h stats from Binance (volume, change%) ----
+  // ---- Fetch 24h stats from Binance ----
   useEffect(() => {
     const symbol = BINANCE_SYMBOLS[market.name];
     if (!symbol) return;
@@ -326,103 +312,112 @@ export function TradingProvider({ children }: { children: ReactNode }) {
       fetch(`https://api.binance.com/api/v3/ticker/24hr?symbol=${symbol.toUpperCase()}`)
         .then(r => r.json())
         .then(data => {
-          dispatch({
-            type: "SET_MARKET_STATS",
+          actions.setMarketStats({
             volume24h: parseFloat(data.quoteVolume || "0"),
             change24h: parseFloat(data.priceChangePercent || "0"),
           });
         })
         .catch(() => {});
+
+      fetch(`https://fapi.binance.com/fapi/v1/premiumIndex?symbol=${symbol.toUpperCase()}`)
+        .then(r => r.json())
+        .then(data => {
+          const rate = parseFloat(data.lastFundingRate || "0");
+          if (!isNaN(rate)) actions.setMarketStats({ fundingRate: rate * 100 });
+        })
+        .catch(() => {});
     };
 
     fetchStats();
-    const interval = setInterval(fetchStats, 30_000); // refresh every 30s
+    const interval = setInterval(fetchStats, 30_000);
     return () => clearInterval(interval);
-  }, [market.name, dispatch]);
+  }, [market.name, actions]);
 
-  // ---- Paper Trading: Check limit order fills on price change ----
-  const prevPriceRef = useRef(0);
+  // ---- Paper Trading: Check limit/stop order fills ----
+  const markPrice = useTradingZustand(s => s.markPrice);
   useEffect(() => {
-    if (state.markPrice <= 0 || state.paperOrders.length === 0) return;
-    const price = state.markPrice;
-    for (const order of state.paperOrders) {
-      const shouldFill =
-        (order.side === "buy" && price <= order.price) ||
-        (order.side === "sell" && price >= order.price);
+    if (markPrice <= 0) return;
+    const orders = useTradingZustand.getState().paperOrders;
+    if (orders.length === 0) return;
+    const price = markPrice;
+
+    for (const order of orders) {
+      let shouldFill = false;
+      let fillPrice = order.price;
+
+      if (order.orderType === "stopMarket" && order.stopPrice) {
+        const triggered = order.side === "buy" ? price >= order.stopPrice : price <= order.stopPrice;
+        if (triggered) { shouldFill = true; fillPrice = price; }
+      } else if (order.orderType === "stopLimit" && order.stopPrice) {
+        const triggered = order.side === "buy" ? price >= order.stopPrice : price <= order.stopPrice;
+        const limitHit = order.side === "buy" ? price <= order.price : price >= order.price;
+        if (triggered && limitHit) { shouldFill = true; fillPrice = order.price; }
+      } else {
+        shouldFill = (order.side === "buy" && price <= order.price) || (order.side === "sell" && price >= order.price);
+      }
+
       if (shouldFill) {
-        dispatch({
-          type: "PAPER_FILL_LIMIT",
-          orderId: order.id,
-          fillPrice: order.price,
-          feeBps: 6,
-        });
+        useTradingZustand.getState().actions.paperFillLimit(order.id, fillPrice, 6);
       }
     }
-    prevPriceRef.current = price;
-  }, [state.markPrice, state.paperOrders, dispatch]);
+  }, [markPrice]);
 
-  // ---- Paper Trading: Check TP/SL on price change ----
+  // ---- Paper Trading: Check TP/SL ----
   useEffect(() => {
-    if (state.markPrice <= 0 || state.paperPositions.length === 0) return;
-    const price = state.markPrice;
-    for (const pos of state.paperPositions) {
-      // Take Profit check
+    if (markPrice <= 0) return;
+    const positions = useTradingZustand.getState().paperPositions;
+    if (positions.length === 0) return;
+    const price = markPrice;
+
+    for (const pos of positions) {
       if (pos.tp && pos.tp > 0) {
         const tpHit = pos.side === "long" ? price >= pos.tp : price <= pos.tp;
         if (tpHit) {
-          dispatch({
-            type: "PAPER_CLOSE_POSITION",
-            positionId: pos.id,
-            closePrice: pos.tp,
-            feeBps: 6,
-          });
-          continue; // don't also check SL for same position
+          useTradingZustand.getState().actions.paperClosePosition(pos.id, pos.tp, 6);
+          continue;
         }
       }
-      // Stop Loss check
       if (pos.sl && pos.sl > 0) {
         const slHit = pos.side === "long" ? price <= pos.sl : price >= pos.sl;
         if (slHit) {
-          dispatch({
-            type: "PAPER_CLOSE_POSITION",
-            positionId: pos.id,
-            closePrice: pos.sl,
-            feeBps: 6,
-          });
+          useTradingZustand.getState().actions.paperClosePosition(pos.id, pos.sl, 6);
         }
       }
     }
-  }, [state.markPrice, state.paperPositions, dispatch]);
+  }, [markPrice]);
 
   // ---- Market Switching ----
   const switchMarket = useCallback((name: string) => {
     const newMarket = MARKETS.find(m => m.name === name);
-    if (!newMarket || newMarket.name === state.selectedMarket) return;
+    const currentMarket = useTradingZustand.getState().selectedMarket;
+    if (!newMarket || newMarket.name === currentMarket) return;
 
-    // Unsubscribe old
     send({
       type: "unsubscribe",
       channels: [`orderbook:${market.id}`, `trades:${market.id}`],
     });
 
-    dispatch({ type: "SET_MARKET", market: name });
+    actions.setMarket(name);
 
-    // Subscribe new
     send({
       type: "subscribe",
       channels: [`orderbook:${newMarket.id}`, `trades:${newMarket.id}`],
     });
-  }, [market.id, state.selectedMarket, dispatch, send]);
+  }, [market.id, actions, send]);
+
+  // ---- Legacy context bridge ----
+  // Read the full store as TradingState shape for backward compatibility
+  const legacyState: TradingState = store as any;
 
   return (
-    <TradingContext.Provider value={{ state, dispatch, send, market, switchMarket }}>
+    <TradingContext.Provider value={{ state: legacyState, dispatch, send, market, switchMarket }}>
       {children}
     </TradingContext.Provider>
   );
 }
 
 // ============================================================
-//                    CONSUMER HOOK
+//                    CONSUMER HOOKS
 // ============================================================
 
 export function useTrading() {
@@ -431,14 +426,13 @@ export function useTrading() {
   return ctx;
 }
 
-// Alias for cross-margin components
 export const useTradingContext = useTrading;
 
 // ============================================================
 //                    HELPERS
 // ============================================================
 
-function parseLevels(raw: any[]): import("../lib/trading-store").PriceLevel[] {
+function parseLevels(raw: any[]): PriceLevel[] {
   if (!raw || raw.length === 0) return [];
 
   const levels = raw.map((l: any) => ({
@@ -448,14 +442,12 @@ function parseLevels(raw: any[]): import("../lib/trading-store").PriceLevel[] {
     percentage: 0,
   }));
 
-  // Calculate cumulative totals
   let cum = 0;
   for (const l of levels) {
     cum += l.size;
     l.total = cum;
   }
 
-  // Calculate percentage (relative to max total)
   const maxTotal = cum;
   for (const l of levels) {
     l.percentage = maxTotal > 0 ? (l.total / maxTotal) * 100 : 0;

@@ -51,6 +51,26 @@ export default function PortfolioPage() {
   const deposited = 100_000; // initial paper balance
   const totalPnlPct = deposited > 0 ? (totalPnl / deposited) * 100 : 0;
 
+  // ---- Risk Metrics ----
+  const totalNotional = paperPositions.reduce((s, p) => s + p.entryPrice * p.size, 0);
+  const longExposure = paperPositions.filter(p => p.side === "long").reduce((s, p) => s + p.entryPrice * p.size, 0);
+  const shortExposure = paperPositions.filter(p => p.side === "short").reduce((s, p) => s + p.entryPrice * p.size, 0);
+  const netExposure = longExposure - shortExposure;
+  const marginUtilization = equity > 0 ? (totalMarginUsed / equity) * 100 : 0;
+  const accountLeverage = equity > 0 ? totalNotional / equity : 0;
+  const freeMargin = state.paperBalance;
+  const marginLevel = totalMarginUsed > 0 ? (equity / totalMarginUsed) * 100 : Infinity;
+
+  // Largest position risk
+  const largestPos = paperPositions.length > 0
+    ? paperPositions.reduce((max, p) => {
+        const notional = p.entryPrice * p.size;
+        return notional > max.entryPrice * max.size ? p : max;
+      })
+    : null;
+  const largestPosNotional = largestPos ? largestPos.entryPrice * largestPos.size : 0;
+  const concentrationPct = totalNotional > 0 ? (largestPosNotional / totalNotional) * 100 : 0;
+
   const fmt = (n: number) => n >= 0
     ? `$${n.toLocaleString("en", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
     : `-$${Math.abs(n).toLocaleString("en", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -136,6 +156,94 @@ export default function PortfolioPage() {
           />
           <MetricBox label="Available Balance" value={fmt(state.paperBalance)} />
         </div>
+
+        {/* Risk Dashboard */}
+        {paperPositions.length > 0 && (
+          <div className="mb-8">
+            <h2 className="text-sm font-semibold mb-3 text-sur-muted uppercase tracking-wider">Risk Overview</h2>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              {/* Margin Utilization */}
+              <div className="bg-sur-surface border border-sur-border rounded-xl p-4">
+                <div className="text-[10px] text-sur-muted uppercase tracking-wider mb-2">Margin Used</div>
+                <div className="text-lg font-bold tabular-nums">{marginUtilization.toFixed(1)}%</div>
+                <div className="mt-2 h-1.5 bg-sur-border rounded-full overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all ${
+                      marginUtilization > 80 ? "bg-sur-red" : marginUtilization > 50 ? "bg-sur-yellow" : "bg-sur-green"
+                    }`}
+                    style={{ width: `${Math.min(marginUtilization, 100)}%` }}
+                  />
+                </div>
+                <div className="text-[10px] text-sur-muted mt-1">
+                  {fmt(totalMarginUsed)} / {fmt(equity)}
+                </div>
+              </div>
+
+              {/* Account Leverage */}
+              <div className="bg-sur-surface border border-sur-border rounded-xl p-4">
+                <div className="text-[10px] text-sur-muted uppercase tracking-wider mb-2">Account Leverage</div>
+                <div className={`text-lg font-bold tabular-nums ${
+                  accountLeverage > 10 ? "text-sur-red" : accountLeverage > 5 ? "text-sur-yellow" : "text-sur-text"
+                }`}>
+                  {accountLeverage.toFixed(2)}x
+                </div>
+                <div className="text-[10px] text-sur-muted mt-1">
+                  Notional: {fmt(totalNotional)}
+                </div>
+                <div className="text-[10px] text-sur-muted">
+                  Free margin: {fmt(freeMargin)}
+                </div>
+              </div>
+
+              {/* Exposure Breakdown */}
+              <div className="bg-sur-surface border border-sur-border rounded-xl p-4">
+                <div className="text-[10px] text-sur-muted uppercase tracking-wider mb-2">Exposure</div>
+                <div className="space-y-1.5">
+                  <div className="flex justify-between text-[11px]">
+                    <span className="text-sur-green">Long</span>
+                    <span className="tabular-nums font-medium">{fmt(longExposure)}</span>
+                  </div>
+                  <div className="flex justify-between text-[11px]">
+                    <span className="text-sur-red">Short</span>
+                    <span className="tabular-nums font-medium">{fmt(shortExposure)}</span>
+                  </div>
+                  <div className="border-t border-sur-border pt-1 flex justify-between text-[11px]">
+                    <span className="text-sur-muted">Net</span>
+                    <span className={`tabular-nums font-medium ${netExposure >= 0 ? "text-sur-green" : "text-sur-red"}`}>
+                      {netExposure >= 0 ? "+" : ""}{fmt(netExposure)}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Risk Indicators */}
+              <div className="bg-sur-surface border border-sur-border rounded-xl p-4">
+                <div className="text-[10px] text-sur-muted uppercase tracking-wider mb-2">Risk Indicators</div>
+                <div className="space-y-1.5">
+                  <div className="flex justify-between text-[11px]">
+                    <span className="text-sur-muted">Margin Level</span>
+                    <span className={`tabular-nums font-medium ${
+                      marginLevel < 150 ? "text-sur-red" : marginLevel < 300 ? "text-sur-yellow" : "text-sur-green"
+                    }`}>
+                      {marginLevel === Infinity ? "---" : `${marginLevel.toFixed(0)}%`}
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-[11px]">
+                    <span className="text-sur-muted">Positions</span>
+                    <span className="tabular-nums">{paperPositions.length}</span>
+                  </div>
+                  <div className="flex justify-between text-[11px]">
+                    <span className="text-sur-muted">Concentration</span>
+                    <span className={`tabular-nums ${concentrationPct > 80 ? "text-sur-yellow" : ""}`}>
+                      {concentrationPct.toFixed(0)}%
+                      {largestPos && <span className="text-sur-muted ml-1">({largestPos.market})</span>}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Tabs */}
         <div className="bg-sur-surface border border-sur-border rounded-xl overflow-hidden">

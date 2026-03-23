@@ -67,13 +67,40 @@ export function getSupabase(): SupabaseClient | null {
 }
 
 // ============================================================
+//                    RETRY HELPER
+// ============================================================
+
+async function dbRetry<T>(
+  fn: () => Promise<T>,
+  label: string,
+  maxRetries = 2,
+): Promise<T | null> {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (attempt === maxRetries) {
+        console.error(`[DB] ${label} failed after ${maxRetries + 1} attempts: ${(err as Error).message}`);
+        return null;
+      }
+      const delay = Math.min(500 * Math.pow(2, attempt), 5000);
+      console.warn(`[DB] ${label} retry ${attempt + 1}/${maxRetries + 1} in ${delay}ms`);
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+  return null;
+}
+
+// ============================================================
 //                    TRADE OPERATIONS
 // ============================================================
 
 export async function insertTrade(trade: TradeRow): Promise<void> {
   if (!client) return;
-  const { error } = await client.from("trades").insert(trade);
-  if (error) console.error("[DB] Insert trade failed:", error.message);
+  await dbRetry(async () => {
+    const { error } = await client!.from("trades").insert(trade);
+    if (error) throw new Error(error.message);
+  }, "insertTrade");
 }
 
 export async function getRecentTrades(market: string, limit = 50): Promise<TradeRow[]> {
@@ -97,10 +124,12 @@ export async function getRecentTrades(market: string, limit = 50): Promise<Trade
 
 export async function upsertPosition(pos: PositionRow): Promise<void> {
   if (!client) return;
-  const { error } = await client
-    .from("positions")
-    .upsert(pos, { onConflict: "trader,market" });
-  if (error) console.error("[DB] Upsert position failed:", error.message);
+  await dbRetry(async () => {
+    const { error } = await client!
+      .from("positions")
+      .upsert(pos, { onConflict: "trader,market" });
+    if (error) throw new Error(error.message);
+  }, "upsertPosition");
 }
 
 export async function getPositions(trader: string): Promise<PositionRow[]> {

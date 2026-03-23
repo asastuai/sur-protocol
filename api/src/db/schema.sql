@@ -71,3 +71,59 @@ BEGIN
     updated_at = now();
 END;
 $$ LANGUAGE plpgsql;
+
+-- ============================================================
+--                    POINTS SYSTEM
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS points (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  trader TEXT NOT NULL,
+  points NUMERIC DEFAULT 0,
+  total_volume NUMERIC DEFAULT 0,
+  trade_count INT DEFAULT 0,
+  streak_days INT DEFAULT 0,
+  last_trade_date DATE,
+  multiplier NUMERIC DEFAULT 1.0,
+  season INT DEFAULT 1,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now(),
+  UNIQUE(trader, season)
+);
+
+CREATE INDEX idx_points_trader ON points(trader);
+CREATE INDEX idx_points_season_points ON points(season, points DESC);
+
+-- ============================================================
+--                    POINTS HISTORY
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS points_history (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  trader TEXT NOT NULL,
+  points_earned NUMERIC NOT NULL,
+  reason TEXT NOT NULL,
+  metadata JSONB,
+  season INT DEFAULT 1,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX idx_points_history_trader ON points_history(trader);
+CREATE INDEX idx_points_history_season ON points_history(season, created_at DESC);
+
+-- ============================================================
+--                    REFERRALS
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS referrals (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  referrer TEXT NOT NULL,
+  referee TEXT NOT NULL UNIQUE,
+  referral_code TEXT NOT NULL,
+  volume_from_referee NUMERIC DEFAULT 0,
+  points_earned NUMERIC DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX idx_referrals_referrer ON referrals(referrer);
+CREATE INDEX idx_referrals_code ON referrals(referral_code);

@@ -11,6 +11,102 @@ import AccountPanel from "@/components/trading/AccountPanel";
 import CollateralPanel from "@/components/trading/CollateralPanel";
 import { DepositWithdrawPanel } from "@/components/trading/DepositWithdrawPanel";
 import { useTrading } from "@/providers/TradingProvider";
+import { KeyboardShortcutsHelp } from "@/components/trading/KeyboardShortcutsHelp";
+
+function useIsMobile(breakpoint = 768) {
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth < breakpoint);
+    check();
+    window.addEventListener("resize", check);
+    return () => window.removeEventListener("resize", check);
+  }, [breakpoint]);
+  return isMobile;
+}
+
+// ============================================================
+//                 MOBILE TRADE VIEW
+// ============================================================
+
+type MobileTab = "chart" | "order" | "book" | "positions";
+
+function MobileTradePage() {
+  const { state } = useTrading();
+  const [tab, setTab] = useState<MobileTab>("chart");
+
+  const tabs: { key: MobileTab; label: string }[] = [
+    { key: "chart", label: "Chart" },
+    { key: "order", label: "Trade" },
+    { key: "book", label: "Book" },
+    { key: "positions", label: "Positions" },
+  ];
+
+  return (
+    <div className="h-full flex flex-col bg-sur-bg">
+      <Header />
+
+      {/* Connection status */}
+      {(state.wsStatus === "connecting" || state.wsStatus === "error") && (
+        <div className={`h-6 flex items-center justify-center text-[10px] border-b flex-shrink-0 ${
+          state.wsStatus === "connecting"
+            ? "bg-sur-yellow/10 border-sur-yellow/20 text-sur-yellow"
+            : "bg-sur-red/10 border-sur-red/20 text-sur-red"
+        }`}>
+          {state.wsStatus === "connecting" && "Connecting..."}
+          {state.wsStatus === "error" && "Engine offline — paper trading active"}
+        </div>
+      )}
+
+      {/* Tab content */}
+      <div className="flex-1 min-h-0 overflow-auto">
+        {tab === "chart" && (
+          <div className="h-full">
+            <Chart market={state.selectedMarket} />
+          </div>
+        )}
+        {tab === "order" && (
+          <div className="p-3 space-y-3">
+            <DepositWithdrawPanel />
+            <OrderPanel />
+            <AccountPanel />
+          </div>
+        )}
+        {tab === "book" && (
+          <div className="h-full">
+            <Orderbook />
+          </div>
+        )}
+        {tab === "positions" && (
+          <div className="h-full">
+            <PositionsPanel />
+          </div>
+        )}
+      </div>
+
+      {/* Bottom tab bar */}
+      <div className="flex border-t border-sur-border bg-sur-surface flex-shrink-0">
+        {tabs.map(t => (
+          <button
+            key={t.key}
+            onClick={() => setTab(t.key)}
+            className={`flex-1 py-3 text-[11px] font-semibold transition-colors ${
+              tab === t.key
+                ? "text-sur-accent border-t-2 border-sur-accent bg-sur-accent/5"
+                : "text-sur-muted hover:text-sur-text"
+            }`}
+          >
+            {t.label}
+            {t.key === "positions" && state.paperPositions.length > 0 && (
+              <span className="ml-1 inline-flex items-center justify-center w-4 h-4 rounded-full bg-sur-accent/20 text-sur-accent text-[8px] font-bold">
+                {state.paperPositions.length}
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 // ============================================================
 //                 RESIZE HANDLE COMPONENT
@@ -98,9 +194,45 @@ const MAX_RIGHT_W = 420;
 const MIN_BOTTOM_H = 120;
 const MAX_BOTTOM_H = 500;
 
+const SHORTCUT_DEFS = [
+  { key: "B", label: "Long / Buy", category: "Order" },
+  { key: "S", label: "Short / Sell", category: "Order" },
+  { key: "M", label: "Market order", category: "Order" },
+  { key: "L", label: "Limit order", category: "Order" },
+  { key: "Enter", label: "Submit order", category: "Order" },
+  { key: "1", label: "25% size", category: "Size" },
+  { key: "2", label: "50% size", category: "Size" },
+  { key: "3", label: "75% size", category: "Size" },
+  { key: "4", label: "100% size", category: "Size" },
+  { key: "?", label: "Toggle this panel", category: "General" },
+  { key: "Esc", label: "Close panel", category: "General" },
+];
+
 export default function TradePage() {
   const { state } = useTrading();
+  const isMobile = useIsMobile();
   const containerRef = useRef<HTMLDivElement>(null);
+  const [showShortcuts, setShowShortcuts] = useState(false);
+
+  // Global ? key for shortcuts help
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const el = document.activeElement;
+      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT")) return;
+      if (e.key === "?") {
+        e.preventDefault();
+        setShowShortcuts(v => !v);
+      }
+      if (e.key === "Escape" && showShortcuts) {
+        e.preventDefault();
+        setShowShortcuts(false);
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [showShortcuts]);
+
+  if (isMobile) return <MobileTradePage />;
 
   // Resizable dimensions
   const [orderbookW, setOrderbookW] = useState(220);
@@ -167,6 +299,20 @@ export default function TradePage() {
             : `Order ${state.lastOrderStatus}`}
         </div>
       )}
+
+      {/* Shortcuts help overlay */}
+      {showShortcuts && (
+        <KeyboardShortcutsHelp shortcuts={SHORTCUT_DEFS} onClose={() => setShowShortcuts(false)} />
+      )}
+
+      {/* Keyboard shortcut hint */}
+      <button
+        onClick={() => setShowShortcuts(v => !v)}
+        className="fixed bottom-3 right-3 z-40 px-2 py-1 rounded bg-sur-surface border border-sur-border text-[9px] text-sur-muted hover:text-sur-text transition-colors opacity-60 hover:opacity-100"
+        title="Keyboard shortcuts (?)"
+      >
+        <kbd className="font-mono">?</kbd> Shortcuts
+      </button>
 
       {/* ====== RESIZABLE LAYOUT ====== */}
       <div ref={containerRef} className="flex-1 flex flex-col min-h-0">

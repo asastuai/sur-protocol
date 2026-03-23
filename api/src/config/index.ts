@@ -1,7 +1,7 @@
-import { type Hex } from "viem";
+import { type Hex, type HttpTransportConfig } from "viem";
 import { baseSepolia, base } from "viem/chains";
 import { type MarketConfig, PRICE_PRECISION, SIZE_PRECISION } from "../types/index.js";
-import { keccak256, toHex } from "viem";
+import { keccak256, toHex, http, fallback } from "viem";
 
 // ============================================================
 //                    ENVIRONMENT
@@ -15,6 +15,7 @@ export interface Config {
   // Chain
   chain: typeof baseSepolia | typeof base;
   rpcUrl: string;
+  rpcUrls: string[]; // primary + fallbacks
 
   // Contracts (set after deployment)
   contracts: {
@@ -40,23 +41,66 @@ export interface Config {
 export function loadConfig(): Config {
   const isTestnet = process.env.NETWORK !== "mainnet";
 
+  // Validate private key
+  const operatorPk = process.env.OPERATOR_PRIVATE_KEY;
+  if (!operatorPk || operatorPk === "0x" || !/^0x[a-fA-F0-9]{64}$/.test(operatorPk)) {
+    console.error("[Fatal] OPERATOR_PRIVATE_KEY is missing or invalid.");
+    console.error("  → Must be a 32-byte hex string (0x + 64 hex chars).");
+    console.error("  → Set it in Railway env vars, NOT in .env files.");
+    process.exit(1);
+  }
+
+  // Validate required contract addresses
+  const requiredAddresses: Record<string, string | undefined> = {
+    VAULT_ADDRESS: process.env.VAULT_ADDRESS,
+    ENGINE_ADDRESS: process.env.ENGINE_ADDRESS,
+    SETTLEMENT_ADDRESS: process.env.SETTLEMENT_ADDRESS,
+  };
+
+  for (const [name, value] of Object.entries(requiredAddresses)) {
+    if (!value || value === "0x" || !/^0x[a-fA-F0-9]{40}$/.test(value)) {
+      console.error(`[Fatal] ${name} is missing or invalid (got: "${value || ""}")`);
+      console.error("  → Must be a valid Ethereum address (0x + 40 hex chars).");
+      process.exit(1);
+    }
+  }
+
+  // Validate RPC URL
+  const rpcUrl = process.env.RPC_URL;
+  if (!rpcUrl && !isTestnet) {
+    console.error("[Fatal] RPC_URL is required for mainnet.");
+    process.exit(1);
+  }
+
+  // Parse fallback RPC URLs (comma-separated)
+  const primaryRpc = rpcUrl || "https://sepolia.base.org";
+  const fallbackRpcs = process.env.RPC_URLS_FALLBACK
+    ? process.env.RPC_URLS_FALLBACK.split(",").map((u) => u.trim()).filter(Boolean)
+    : [];
+  const allRpcs = [primaryRpc, ...fallbackRpcs];
+
+  if (fallbackRpcs.length > 0) {
+    console.log(`[Config] RPC fallbacks configured: ${fallbackRpcs.length} backup(s)`);
+  }
+
   return {
     port: parseInt(process.env.API_PORT || "3001"),
     wsPort: parseInt(process.env.WS_PORT || "3002"),
 
     chain: isTestnet ? baseSepolia : base,
-    rpcUrl: process.env.RPC_URL || "https://sepolia.base.org",
+    rpcUrl: primaryRpc,
+    rpcUrls: allRpcs,
 
     contracts: {
-      vault: (process.env.VAULT_ADDRESS || "0x") as Hex,
-      engine: (process.env.ENGINE_ADDRESS || "0x") as Hex,
-      settlement: (process.env.SETTLEMENT_ADDRESS || "0x") as Hex,
+      vault: process.env.VAULT_ADDRESS as Hex,
+      engine: process.env.ENGINE_ADDRESS as Hex,
+      settlement: process.env.SETTLEMENT_ADDRESS as Hex,
       liquidator: (process.env.LIQUIDATOR_ADDRESS || "0x") as Hex,
       insuranceFund: (process.env.INSURANCE_FUND_ADDRESS || "0x") as Hex,
       oracleRouter: (process.env.ORACLE_ROUTER_ADDRESS || "0x") as Hex,
     },
 
-    operatorPrivateKey: (process.env.OPERATOR_PRIVATE_KEY || "0x") as Hex,
+    operatorPrivateKey: operatorPk as Hex,
 
     batchIntervalMs: parseInt(process.env.BATCH_INTERVAL_MS || "2000"),
     maxBatchSize: parseInt(process.env.MAX_BATCH_SIZE || "50"),
@@ -262,3 +306,19 @@ export const VAULT_ABI = [
     outputs: [{ type: "uint256" }],
   },
 ] as const;
+
+// ============================================================
+//                    RPC TRANSPORT
+// ============================================================
+
+/** Creates a viem transport with fallback support if multiple RPC URLs configured */
+export function createTransport(config: Config) {
+  if (config.rpcUrls.length <= 1) {
+    return http(config.rpcUrl, { timeout: 30_000 });
+  }
+
+  return fallback(
+    config.rpcUrls.map((url) => http(url, { timeout: 20_000 })),
+    { rank: true } // auto-rank RPCs by latency
+  );
+}

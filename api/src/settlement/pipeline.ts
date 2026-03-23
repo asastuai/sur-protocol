@@ -16,17 +16,42 @@
 import {
   createPublicClient,
   createWalletClient,
-  http,
   type PublicClient,
   type WalletClient,
   type Hex,
   type Chain,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { type Config, SETTLEMENT_ABI } from "../config/index.js";
+import { type Config, SETTLEMENT_ABI, createTransport } from "../config/index.js";
 import type { Trade, Order, MatchedTradeOnChain, SignedOrderOnChain, SettlementBatch } from "../types/index.js";
 import { EventEmitter } from "events";
 import { insertTrade } from "../db/supabase.js";
+import { calculatePointsForTrade } from "../points/engine.js";
+
+// ============================================================
+//                  RETRY WITH BACKOFF
+// ============================================================
+
+async function retryWithBackoff<T>(
+  fn: () => Promise<T>,
+  opts: { maxRetries?: number; baseDelayMs?: number; label?: string } = {}
+): Promise<T> {
+  const { maxRetries = 3, baseDelayMs = 1000, label = "operation" } = opts;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (attempt === maxRetries) throw err;
+      const delay = Math.min(baseDelayMs * Math.pow(2, attempt), 10_000);
+      console.warn(
+        `[Retry] ${label} failed (attempt ${attempt + 1}/${maxRetries + 1}), retrying in ${delay}ms: ${(err as Error).message?.slice(0, 80)}`
+      );
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+  throw new Error("unreachable");
+}
 
 // ============================================================
 //                  SETTLEMENT PIPELINE
@@ -61,15 +86,17 @@ export class SettlementPipeline extends EventEmitter {
 
     this.account = privateKeyToAccount(config.operatorPrivateKey);
 
+    const transport = createTransport(config);
+
     this.publicClient = createPublicClient({
       chain: config.chain as Chain,
-      transport: http(config.rpcUrl),
+      transport,
     });
 
     this.walletClient = createWalletClient({
       account: this.account,
       chain: config.chain as Chain,
-      transport: http(config.rpcUrl),
+      transport,
     });
   }
 
@@ -148,15 +175,22 @@ export class SettlementPipeline extends EventEmitter {
     this.emit("batchCreated", batch);
 
     try {
-      const txHash = await this.submitBatch(onChainTrades);
+      const txHash = await retryWithBackoff(
+        () => this.submitBatch(onChainTrades),
+        { maxRetries: 3, label: `batch #${batchId} submit` }
+      );
       batch.txHash = txHash;
       batch.status = "submitted";
       this.emit("batchSubmitted", { batchId, txHash });
 
-      // Wait for confirmation
-      const receipt = await this.publicClient.waitForTransactionReceipt({
-        hash: txHash,
-      });
+      // Wait for confirmation with retry
+      const receipt = await retryWithBackoff(
+        () => this.publicClient.waitForTransactionReceipt({
+          hash: txHash,
+          timeout: 60_000, // 60s timeout per attempt
+        }),
+        { maxRetries: 2, label: `batch #${batchId} receipt` }
+      );
 
       if (receipt.status === "success") {
         batch.status = "confirmed";
@@ -164,15 +198,23 @@ export class SettlementPipeline extends EventEmitter {
 
         // Persist trades to Supabase
         for (const { trade, makerOrder } of toSettle) {
+          const tradePrice = Number(trade.price) / 1e6;
+          const tradeSize = Number(trade.size) / 1e8;
+          const tradeVolume = tradePrice * tradeSize;
+
           insertTrade({
             market: makerOrder.marketId,
-            price: Number(trade.price) / 1e6,
-            size: Number(trade.size) / 1e8,
+            price: tradePrice,
+            size: tradeSize,
             side: trade.makerSide,
             maker_order_id: trade.makerOrderId,
             taker_order_id: trade.takerOrderId,
             tx_hash: txHash,
           }).catch(() => {}); // non-blocking
+
+          // Award points to both maker and taker
+          calculatePointsForTrade(trade.makerTrader, tradeVolume).catch(() => {});
+          calculatePointsForTrade(trade.takerTrader, tradeVolume).catch(() => {});
         }
       } else {
         batch.status = "failed";
@@ -182,8 +224,18 @@ export class SettlementPipeline extends EventEmitter {
       batch.status = "failed";
       this.emit("batchFailed", { batchId, reason: String(err) });
 
-      // Re-queue failed trades
-      this.pendingTrades.push(...toSettle);
+      // Re-queue failed trades (max 3 times to prevent infinite loop)
+      const MAX_REQUEUE = 3;
+      const requeued = toSettle.filter((t) => {
+        const count = (t as any).__requeueCount || 0;
+        if (count >= MAX_REQUEUE) return false;
+        (t as any).__requeueCount = count + 1;
+        return true;
+      });
+      if (requeued.length < toSettle.length) {
+        console.error(`[Settlement] Dropped ${toSettle.length - requeued.length} trades after ${MAX_REQUEUE} retries`);
+      }
+      this.pendingTrades.push(...requeued);
     }
   }
 

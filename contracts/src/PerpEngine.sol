@@ -43,6 +43,7 @@ contract PerpEngine {
     error NotOwner();
     error NotOperator();
     error Paused();
+    error NotPaused();
     error ZeroAmount();
     error ZeroAddress();
     error MarketNotFound(bytes32 marketId);
@@ -58,7 +59,9 @@ contract PerpEngine {
     error CircuitBreakerActive();
     error ExposureLimitExceeded(uint256 traderNotional, uint256 maxAllowed);
     error OiCapExceeded(bytes32 marketId, uint256 currentOi, uint256 cap);
+    error ReserveFactorExceeded(bytes32 marketId, uint256 oiNotional, uint256 maxNotional);
     error OiSkewCapExceeded(bytes32 marketId, uint256 dominantSide, uint256 totalOi);
+    error InvalidParam();
 
     // ============================================================
     //                          EVENTS
@@ -69,6 +72,9 @@ contract PerpEngine {
     event MarginTiersUpdated(bytes32 indexed marketId, uint256 tierCount);
     event OiCapUpdated(bytes32 indexed marketId, uint256 newCap);
     event OiSkewCapUpdated(uint256 newCapBps);
+    event ReserveFactorUpdated(uint256 newFactorBps);
+    event PriceImpactParamsUpdated(bytes32 indexed marketId, uint256 impactExponentBps, uint256 impactFactorBps);
+    event PriceImpactApplied(bytes32 indexed marketId, address indexed trader, uint256 impactUsdc, bool worsensSkew);
 
     event PositionOpened(
         bytes32 indexed marketId,
@@ -127,6 +133,8 @@ contract PerpEngine {
     event PauseStatusChanged(bool isPaused);
     event CircuitBreakerTriggered(bytes32 indexed marketId, uint256 liquidatedNotional, uint256 openInterestNotional, uint256 timestamp);
     event CircuitBreakerReset(uint256 timestamp);
+    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
+    event OwnershipTransferStarted(address indexed currentOwner, address indexed pendingOwner);
 
     // ============================================================
     //                        STRUCTS
@@ -177,6 +185,7 @@ contract PerpEngine {
     // ============================================================
 
     address public owner;
+    address public pendingOwner;
     bool public paused;
     IPerpVault public vault;
 
@@ -193,11 +202,20 @@ contract PerpEngine {
     address public feeRecipient;
     address public insuranceFund;
 
+    /// @notice Dedicated funding pool account (C-2 fix: separated from feeRecipient)
+    /// @dev Funding flows between longs and shorts through this pool, not fee collection.
+    ///      Must be funded separately from protocol fees.
+    address public fundingPool;
+
     /// @notice Margin mode per trader (default: ISOLATED)
     mapping(address => MarginMode) public traderMarginMode;
 
     /// @notice Track which markets a trader has positions in (for cross-margin equity calculation)
     mapping(address => bytes32[]) public traderActiveMarkets;
+
+    /// @notice G-06/G-07: O(1) lookup for active market membership + index
+    /// @dev Maps trader => marketId => (index + 1) in traderActiveMarkets. 0 = not present.
+    mapping(address => mapping(bytes32 => uint256)) internal _activeMarketIndex;
 
     /// @notice Max trader exposure as % of total vault deposits (in BPS). 0 = disabled.
     uint256 public maxExposureBps = 500; // 5% of total vault TVL per trader
@@ -219,6 +237,22 @@ contract PerpEngine {
 
     /// @notice OI skew cap in BPS (max % one side can be of total OI). Default 7000 = 70%
     uint256 public oiSkewCapBps = 7000;
+
+    /// @notice Reserve factor: max OI notional as % of pool TVL (in BPS). 0 = disabled.
+    /// @dev GMX-inspired. Prevents OI from exceeding a fraction of available liquidity.
+    ///      E.g., 8000 = OI notional can be at most 80% of vault totalDeposits.
+    uint256 public reserveFactorBps = 0;
+
+    /// @notice Price impact parameters per market (GMX-inspired quadratic model)
+    /// @dev impactFee = (sizeDelta / totalOI)^2 * impactFactorBps / BPS
+    ///      Only applied to trades that WORSEN the OI skew.
+    struct PriceImpactConfig {
+        uint256 impactFactorBps;    // base impact factor (e.g., 100 = 1%)
+        uint256 impactExponentBps;  // exponent in BPS (20000 = 2.0x, quadratic)
+    }
+    mapping(bytes32 => PriceImpactConfig) public priceImpactConfigs;
+
+    // G-19: Reentrancy uses transient storage (EIP-1153) — no storage slot needed
 
     // ============================================================
     //                       MODIFIERS
@@ -249,6 +283,16 @@ contract PerpEngine {
         _;
     }
 
+    /// @notice Reentrancy guard (C-1 fix + G-19: transient storage for gas efficiency)
+    modifier nonReentrant() {
+        assembly {
+            if tload(0) { revert(0, 0) }
+            tstore(0, 1)
+        }
+        _;
+        assembly { tstore(0, 0) }
+    }
+
     // ============================================================
     //                      CONSTRUCTOR
     // ============================================================
@@ -257,15 +301,18 @@ contract PerpEngine {
         address _vault,
         address _owner,
         address _feeRecipient,
-        address _insuranceFund
+        address _insuranceFund,
+        address _fundingPool
     ) {
         if (_vault == address(0) || _owner == address(0)) revert ZeroAddress();
         if (_feeRecipient == address(0) || _insuranceFund == address(0)) revert ZeroAddress();
+        if (_fundingPool == address(0)) revert ZeroAddress();
 
         vault = IPerpVault(_vault);
         owner = _owner;
         feeRecipient = _feeRecipient;
         insuranceFund = _insuranceFund;
+        fundingPool = _fundingPool;
     }
 
     // ============================================================
@@ -282,10 +329,10 @@ contract PerpEngine {
         bytes32 marketId = keccak256(abi.encodePacked(name));
         if (markets[marketId].id != bytes32(0)) revert MarketAlreadyExists(marketId);
 
-        require(initialMarginBps > 0 && initialMarginBps <= BPS, "Invalid initial margin");
-        require(maintenanceMarginBps > 0 && maintenanceMarginBps < initialMarginBps, "Invalid maint margin");
-        require(maxPositionSize > 0, "Invalid max position");
-        require(fundingIntervalSecs > 0, "Invalid funding interval");
+        if (initialMarginBps == 0 || initialMarginBps > BPS) revert InvalidParam();
+        if (maintenanceMarginBps == 0 || maintenanceMarginBps >= initialMarginBps) revert InvalidParam();
+        if (maxPositionSize == 0) revert InvalidParam();
+        if (fundingIntervalSecs == 0) revert InvalidParam();
 
         markets[marketId] = Market({
             id: marketId,
@@ -308,10 +355,13 @@ contract PerpEngine {
         emit MarketAdded(marketId, name, initialMarginBps, maintenanceMarginBps);
     }
 
+    event MarketActiveChanged(bytes32 indexed marketId, bool active);
+
     function setMarketActive(bytes32 marketId, bool active)
         external onlyOwner marketExists(marketId)
     {
         markets[marketId].active = active;
+        emit MarketActiveChanged(marketId, active); // M-9 fix
     }
 
     // ============================================================
@@ -359,6 +409,7 @@ contract PerpEngine {
         external
         onlyOperator
         whenNotPaused
+        nonReentrant
         marketExists(marketId)
         marketActive(marketId)
     {
@@ -402,9 +453,11 @@ contract PerpEngine {
         external
         onlyOperator
         whenNotPaused
+        nonReentrant
         marketExists(marketId)
     {
         if (price == 0) revert InvalidPrice();
+        _requireFreshPrice(marketId); // H-3 fix: require fresh oracle price for closes too
 
         Position storage pos = positions[marketId][trader];
         if (pos.size == 0) revert NoPosition();
@@ -430,7 +483,7 @@ contract PerpEngine {
     /// @dev Funding = (markPrice - indexPrice) / indexPrice per interval.
     ///      Longs pay shorts when funding > 0 (mark > index).
     function applyFundingRate(bytes32 marketId)
-        external marketExists(marketId)
+        external nonReentrant marketExists(marketId)
     {
         Market storage market = markets[marketId];
 
@@ -441,7 +494,15 @@ contract PerpEngine {
         int256 priceDiff = int256(market.markPrice) - int256(market.indexPrice);
         int256 fundingRate = (priceDiff * int256(FUNDING_PRECISION)) / int256(market.indexPrice);
 
+        // H-4 fix: Cap funding rate per interval (max 0.1% = 1e15 in FUNDING_PRECISION)
+        int256 maxFundingRate = int256(FUNDING_PRECISION) / 1000; // 0.1%
+        if (fundingRate > maxFundingRate) fundingRate = maxFundingRate;
+        if (fundingRate < -maxFundingRate) fundingRate = -maxFundingRate;
+
+        // H-4 fix: Cap max periods per call to prevent accumulated wipeout
         uint256 periods = elapsed / market.fundingIntervalSecs;
+        if (periods > 3) periods = 3;
+
         int256 totalFunding = fundingRate * int256(periods);
 
         market.cumulativeFunding += totalFunding;
@@ -467,14 +528,21 @@ contract PerpEngine {
         int256 fundingPayment = (pos.size * fundingDelta) / int256(FUNDING_PRECISION);
 
         if (fundingPayment > 0) {
+            // Trader pays funding → goes to dedicated funding pool (C-2 fix)
             uint256 payment = uint256(fundingPayment);
             if (payment > pos.margin) payment = pos.margin;
             pos.margin -= payment;
-            vault.internalTransfer(trader, feeRecipient, payment);
+            vault.internalTransfer(trader, fundingPool, payment);
         } else if (fundingPayment < 0) {
+            // Trader receives funding ← from dedicated funding pool (C-2 fix)
             uint256 receipt = uint256(-fundingPayment);
-            pos.margin += receipt;
-            vault.internalTransfer(feeRecipient, trader, receipt);
+            // Graceful degradation: cap to available funding pool balance
+            uint256 fpBal = vault.balances(fundingPool);
+            if (receipt > fpBal) receipt = fpBal;
+            if (receipt > 0) {
+                pos.margin += receipt;
+                vault.internalTransfer(fundingPool, trader, receipt);
+            }
         }
 
         pos.lastCumulativeFunding = market.cumulativeFunding;
@@ -559,6 +627,57 @@ contract PerpEngine {
                 revert OiSkewCapExceeded(marketId, dominant, totalOi);
             }
         }
+
+        // Check reserve factor: OI notional must not exceed % of pool TVL
+        if (reserveFactorBps > 0) {
+            uint256 poolTvl = vault.totalDeposits();
+            if (poolTvl > 0) {
+                // Convert OI from SIZE_PRECISION to notional using mark price
+                uint256 oiNotional = (totalOi * market.markPrice) / SIZE_PRECISION;
+                uint256 maxOiNotional = (poolTvl * reserveFactorBps) / BPS;
+                if (oiNotional > maxOiNotional) {
+                    revert ReserveFactorExceeded(marketId, oiNotional, maxOiNotional);
+                }
+            }
+        }
+    }
+
+    /// @notice Calculate price impact fee for trades that worsen OI skew
+    /// @dev GMX-inspired quadratic model: fee = notional * (sizeFraction)^exponent * factor
+    ///      Only penalizes the side that increases the imbalance.
+    function _calculatePriceImpact(
+        bytes32 marketId,
+        address trader,
+        int256 sizeDelta,
+        uint256 notional
+    ) internal returns (uint256 impactFee) {
+        PriceImpactConfig storage config = priceImpactConfigs[marketId];
+        if (config.impactFactorBps == 0) return 0;
+
+        Market storage market = markets[marketId];
+        uint256 totalOi = market.openInterestLong + market.openInterestShort;
+        if (totalOi == 0) return 0;
+
+        // Determine if this trade worsens the skew
+        bool isLong = sizeDelta > 0;
+        bool worsensSkew;
+        if (market.openInterestLong >= market.openInterestShort) {
+            worsensSkew = isLong; // longs dominant → going long worsens skew
+        } else {
+            worsensSkew = !isLong; // shorts dominant → going short worsens skew
+        }
+
+        if (!worsensSkew) return 0; // reducing skew → no penalty
+
+        // sizeFraction = absSizeDelta / totalOi (in BPS for precision)
+        uint256 sizeFractionBps = (_abs(sizeDelta) * BPS) / totalOi;
+
+        // impactFee = notional * (sizeFractionBps/BPS)^2 * impactFactorBps / BPS
+        // Quadratic: larger trades relative to OI pay disproportionately more
+        impactFee = (notional * sizeFractionBps * sizeFractionBps * config.impactFactorBps)
+            / (BPS * BPS * BPS);
+
+        emit PriceImpactApplied(marketId, trader, impactFee, worsensSkew);
     }
 
     function _openNewPosition(
@@ -571,6 +690,10 @@ contract PerpEngine {
         uint256 notional = _notional(price, _abs(sizeDelta));
         uint256 requiredMargin = _calculateTieredMargin(market.id, notional, true);
 
+        // G-02: Cache vault.balances(trader) once, track remaining arithmetically
+        uint256 available = vault.balances(trader);
+        uint256 transferred;
+
         if (traderMarginMode[trader] == MarginMode.CROSS) {
             // Cross-margin: check total account equity covers total initial margin
             // including this new position
@@ -578,25 +701,24 @@ contract PerpEngine {
 
             // In cross mode, lock only a minimal margin per position (the required initial)
             // but the check was against total equity, so profitable positions subsidize new ones
-            uint256 available = vault.balances(trader);
-            uint256 toTransfer = requiredMargin;
-            if (toTransfer > available) {
+            transferred = requiredMargin;
+            if (transferred > available) {
                 // This can happen when unrealized PnL from other positions covers the margin
                 // Transfer what's available; the position is backed by total account equity
-                toTransfer = available;
+                transferred = available;
             }
-            if (toTransfer > 0) {
-                vault.internalTransfer(trader, address(this), toTransfer);
+            if (transferred > 0) {
+                vault.internalTransfer(trader, address(this), transferred);
             }
-            pos.margin = toTransfer;
+            pos.margin = transferred;
         } else {
             // Isolated: strict per-position check
-            uint256 available = vault.balances(trader);
             if (available < requiredMargin) {
                 revert InsufficientMargin(requiredMargin, available);
             }
             vault.internalTransfer(trader, address(this), requiredMargin);
             pos.margin = requiredMargin;
+            transferred = requiredMargin;
         }
 
         pos.size = sizeDelta;
@@ -606,6 +728,18 @@ contract PerpEngine {
 
         _updateOpenInterest(market, int256(0), sizeDelta);
         _checkOiCaps(market.id);
+
+        // Price impact: charge fee for trades worsening OI skew
+        uint256 impactFee = _calculatePriceImpact(market.id, trader, sizeDelta, notional);
+        if (impactFee > 0) {
+            // G-02: Use cached balance minus what was already transferred
+            uint256 remainingBal = available - transferred;
+            uint256 fee = impactFee > remainingBal ? remainingBal : impactFee;
+            if (fee > 0) {
+                vault.internalTransfer(trader, feeRecipient, fee);
+            }
+        }
+
         _addActiveMarket(trader, market.id);
         emit PositionOpened(market.id, trader, sizeDelta, price, pos.margin);
         _checkExposureLimit(trader);
@@ -632,27 +766,30 @@ contract PerpEngine {
         uint256 totalRequiredMargin = _calculateTieredMargin(market.id, totalNotionalAfter, true);
         uint256 additionalMargin = totalRequiredMargin > pos.margin ? totalRequiredMargin - pos.margin : 0;
 
+        // G-03: Cache vault.balances(trader) once, track remaining arithmetically
+        uint256 available = vault.balances(trader);
+        uint256 transferred;
+
         if (traderMarginMode[trader] == MarginMode.CROSS) {
             // Cross-margin: check total equity covers total initial margin after increase
             _requireCrossMarginSufficient(trader, market.id, totalNotionalAfter, market.initialMarginBps);
 
-            uint256 available = vault.balances(trader);
-            uint256 toTransfer = additionalMargin;
-            if (toTransfer > available) {
-                toTransfer = available;
+            transferred = additionalMargin;
+            if (transferred > available) {
+                transferred = available;
             }
-            if (toTransfer > 0) {
-                vault.internalTransfer(trader, address(this), toTransfer);
+            if (transferred > 0) {
+                vault.internalTransfer(trader, address(this), transferred);
             }
-            pos.margin += toTransfer;
+            pos.margin += transferred;
         } else {
             // Isolated: strict per-position check
-            uint256 available = vault.balances(trader);
             if (available < additionalMargin) {
                 revert InsufficientMargin(additionalMargin, available);
             }
             vault.internalTransfer(trader, address(this), additionalMargin);
             pos.margin += additionalMargin;
+            transferred = additionalMargin;
         }
 
         int256 newSize = oldSize + sizeDelta;
@@ -662,6 +799,19 @@ contract PerpEngine {
 
         _updateOpenInterest(market, oldSize, newSize);
         _checkOiCaps(market.id);
+
+        // Price impact on the increase delta
+        uint256 deltaNotional = _notional(price, absDelta);
+        uint256 impactFee = _calculatePriceImpact(market.id, trader, sizeDelta, deltaNotional);
+        if (impactFee > 0) {
+            // G-03: Use cached balance minus what was already transferred
+            uint256 remainingBal = available - transferred;
+            uint256 fee = impactFee > remainingBal ? remainingBal : impactFee;
+            if (fee > 0) {
+                vault.internalTransfer(trader, feeRecipient, fee);
+            }
+        }
+
         emit PositionModified(market.id, trader, oldSize, newSize, newEntryPrice, pos.margin, 0);
         _checkExposureLimit(trader);
     }
@@ -688,8 +838,10 @@ contract PerpEngine {
         int256 closedSizeSigned = oldSize > 0 ? int256(closingSize) : -int256(closingSize);
         int256 realizedPnl = _calculatePnl(pos.entryPrice, price, closedSizeSigned);
 
-        // Release proportional margin
-        uint256 releasedMargin = (pos.margin * closingSize) / _abs(oldSize);
+        // Release proportional margin (full margin on full close to avoid dust)
+        uint256 releasedMargin = (newSize == 0)
+            ? pos.margin
+            : (pos.margin * closingSize) / _abs(oldSize);
         _settlePnl(trader, realizedPnl, releasedMargin);
         pos.margin -= releasedMargin;
 
@@ -732,7 +884,14 @@ contract PerpEngine {
             if (totalReturn > engineBal) {
                 // Engine can't fully cover → pull shortfall from insurance
                 uint256 shortfall = totalReturn - engineBal;
-                vault.internalTransfer(insuranceFund, address(this), shortfall);
+                uint256 insuranceBal = vault.balances(insuranceFund);
+                if (shortfall > insuranceBal) shortfall = insuranceBal;
+                if (shortfall > 0) {
+                    vault.internalTransfer(insuranceFund, address(this), shortfall);
+                }
+                // Cap totalReturn to what's actually available
+                uint256 available = vault.balances(address(this));
+                if (totalReturn > available) totalReturn = available;
             }
 
             vault.internalTransfer(address(this), trader, totalReturn);
@@ -793,17 +952,51 @@ contract PerpEngine {
         }
     }
 
+    /// @dev G-10: Extracted from liquidatePosition to reduce stack depth
+    function _distributeLiquidationRewards(
+        bytes32 marketId,
+        address keeper,
+        uint256 currentPrice,
+        uint256 liquidateSize,
+        uint256 releasedMargin,
+        int256 pnl
+    ) internal returns (int256 badDebt, uint256 keeperReward, uint256 insurancePayout) {
+        uint256 liquidatedNotional = _notional(currentPrice, liquidateSize);
+        int256 effectiveMargin = int256(releasedMargin) + pnl;
+
+        if (effectiveMargin <= 0) {
+            badDebt = -effectiveMargin;
+            keeperReward = (liquidatedNotional * 5) / BPS; // 0.05%
+            // Graceful degradation: if insurance fund is depleted, pay what's available
+            uint256 insuranceBal = vault.balances(insuranceFund);
+            if (keeperReward > insuranceBal) keeperReward = insuranceBal;
+            if (keeperReward > 0) {
+                vault.internalTransfer(insuranceFund, keeper, keeperReward);
+            }
+        } else {
+            uint256 remaining = uint256(effectiveMargin);
+            uint256 maxReward = (liquidatedNotional * 500) / BPS; // cap 5%
+            keeperReward = remaining / 2;
+            if (keeperReward > maxReward) keeperReward = maxReward;
+            insurancePayout = remaining - keeperReward;
+
+            vault.internalTransfer(address(this), keeper, keeperReward);
+            if (insurancePayout > 0) {
+                vault.internalTransfer(address(this), insuranceFund, insurancePayout);
+            }
+        }
+
+        _trackLiquidation(marketId, liquidatedNotional);
+    }
+
     /// @notice Check circuit breaker status and auto-reset after cooldown
+    /// @dev M-5 fix: Removed O(n) market loop — per-market windows reset lazily in _trackLiquidation
     function _checkCircuitBreaker() internal {
         if (!circuitBreakerActive) return;
         // Auto-reset after cooldown
         if (block.timestamp - circuitBreakerTriggeredAt >= circuitBreakerCooldownSecs) {
             circuitBreakerActive = false;
-            // Reset all windows
-            for (uint256 i = 0; i < marketIds.length;) {
-                liquidatedInWindow[marketIds[i]] = 0;
-                unchecked { ++i; }
-            }
+            // Per-market windows reset lazily in _trackLiquidation when window expires
             emit CircuitBreakerReset(block.timestamp);
             return;
         }
@@ -853,7 +1046,7 @@ contract PerpEngine {
         bytes32 marketId,
         address trader,
         address keeper
-    ) external onlyOperator whenNotPaused marketExists(marketId) {
+    ) external onlyOperator whenNotPaused nonReentrant marketExists(marketId) {
         // Cross-margin traders must be liquidated via liquidateAccount()
         if (traderMarginMode[trader] == MarginMode.CROSS) {
             revert NotLiquidatable();
@@ -866,13 +1059,14 @@ contract PerpEngine {
         uint256 currentPrice = market.markPrice;
         if (currentPrice == 0) revert InvalidPrice();
 
-        // Verify position is actually liquidatable (uses tiered maintenance)
+        // H-1 fix: Apply pending funding BEFORE liquidation check
+        // Positions that become solvent after receiving funding should not be liquidated
+        _applyFunding(marketId, trader);
+
+        // Verify position is actually liquidatable (uses tiered maintenance, post-funding margin)
         if (!_isBelowMaintenance(marketId, pos, currentPrice)) {
             revert NotLiquidatable();
         }
-
-        // Apply pending funding first
-        _applyFunding(marketId, trader);
 
         int256 oldSize = pos.size;
         uint256 absOldSize = _abs(oldSize);
@@ -887,61 +1081,42 @@ contract PerpEngine {
         if (isFullClose) liquidateSize = absOldSize;
 
         // PnL on liquidated portion
-        int256 liquidatedSizeSigned = oldSize > 0 ? int256(liquidateSize) : -int256(liquidateSize);
-        int256 pnl = _calculatePnl(pos.entryPrice, currentPrice, liquidatedSizeSigned);
-
-        // Release proportional margin
-        uint256 releasedMargin = isFullClose ? pos.margin : (pos.margin * liquidateSize) / absOldSize;
-
-        int256 effectiveMargin = int256(releasedMargin) + pnl;
-        int256 badDebt = int256(0);
-        uint256 keeperReward = 0;
-        uint256 insurancePayout = 0;
-
-        if (effectiveMargin <= 0) {
-            badDebt = -effectiveMargin;
-            uint256 notional = _notional(currentPrice, liquidateSize);
-            keeperReward = (notional * 5) / BPS; // 0.05%
-            vault.internalTransfer(insuranceFund, keeper, keeperReward);
-        } else {
-            uint256 remaining = uint256(effectiveMargin);
-            uint256 notional = _notional(currentPrice, liquidateSize);
-            uint256 maxReward = (notional * 500) / BPS; // cap 5%
-            keeperReward = remaining / 2;
-            if (keeperReward > maxReward) keeperReward = maxReward;
-            insurancePayout = remaining - keeperReward;
-
-            vault.internalTransfer(address(this), keeper, keeperReward);
-            if (insurancePayout > 0) {
-                vault.internalTransfer(address(this), insuranceFund, insurancePayout);
-            }
-        }
-
-        // Circuit breaker tracking
-        uint256 liquidatedNotional = _notional(currentPrice, liquidateSize);
-        _trackLiquidation(marketId, liquidatedNotional);
-
-        // Update position or delete
-        if (isFullClose) {
-            _updateOpenInterest(market, oldSize, int256(0));
-            _removeActiveMarket(trader, marketId);
-            delete positions[marketId][trader];
-        } else {
-            int256 newSize = oldSize > 0
-                ? oldSize - int256(liquidateSize)
-                : oldSize + int256(liquidateSize);
-            pos.size = newSize;
-            pos.margin -= releasedMargin;
-            pos.lastUpdated = block.timestamp;
-            _updateOpenInterest(market, oldSize, newSize);
-        }
-
-        emit PositionLiquidated(
-            marketId, trader, keeper,
-            liquidatedSizeSigned, currentPrice, pnl,
-            uint256(effectiveMargin > 0 ? effectiveMargin : int256(0)),
-            keeperReward, insurancePayout, badDebt
+        int256 pnl = _calculatePnl(
+            pos.entryPrice, currentPrice,
+            oldSize > 0 ? int256(liquidateSize) : -int256(liquidateSize)
         );
+
+        {
+            // Scoped block to reduce stack depth
+            uint256 releasedMargin = isFullClose ? pos.margin : (pos.margin * liquidateSize) / absOldSize;
+
+            (int256 badDebt, uint256 keeperReward, uint256 insurancePayout) =
+                _distributeLiquidationRewards(marketId, keeper, currentPrice, liquidateSize, releasedMargin, pnl);
+
+            // Update position or delete
+            if (isFullClose) {
+                _updateOpenInterest(market, oldSize, int256(0));
+                _removeActiveMarket(trader, marketId);
+                delete positions[marketId][trader];
+            } else {
+                int256 newSize = oldSize > 0
+                    ? oldSize - int256(liquidateSize)
+                    : oldSize + int256(liquidateSize);
+                pos.size = newSize;
+                pos.margin -= releasedMargin;
+                pos.lastUpdated = block.timestamp;
+                _updateOpenInterest(market, oldSize, newSize);
+            }
+
+            int256 effectiveMargin = int256(releasedMargin) + pnl;
+            emit PositionLiquidated(
+                marketId, trader, keeper,
+                oldSize > 0 ? int256(liquidateSize) : -int256(liquidateSize),
+                currentPrice, pnl,
+                uint256(effectiveMargin > 0 ? effectiveMargin : int256(0)),
+                keeperReward, insurancePayout, badDebt
+            );
+        }
     }
 
     error NotLiquidatable();
@@ -1018,6 +1193,14 @@ contract PerpEngine {
 
     function marketCount() external view returns (uint256) {
         return marketIds.length;
+    }
+
+    /// @notice G-18: Lightweight OI getter for OrderSettlement dynamic spread
+    /// @dev Avoids decoding 14 return values from markets() struct
+    function getOpenInterest(bytes32 marketId) external view returns (uint256 oiLong, uint256 oiShort) {
+        Market storage m = markets[marketId];
+        oiLong = m.openInterestLong;
+        oiShort = m.openInterestShort;
     }
 
     // ============================================================
@@ -1112,49 +1295,6 @@ contract PerpEngine {
         equity = int256(vault.balances(trader)) + positionEquity;
     }
 
-    /// @notice Comprehensive account details for cross-margin traders
-    function getAccountDetails(address trader)
-        external view returns (
-            MarginMode mode,
-            int256 totalEquity,
-            uint256 totalInitialRequired,
-            uint256 totalMaintenanceRequired,
-            uint256 totalNotional,
-            uint256 freeBalance,
-            uint256 positionCount,
-            int256 totalUnrealizedPnl
-        )
-    {
-        mode = traderMarginMode[trader];
-        freeBalance = vault.balances(trader);
-        int256 positionEquity = int256(0);
-        totalUnrealizedPnl = 0;
-
-        bytes32[] storage activeMarkets = traderActiveMarkets[trader];
-        positionCount = activeMarkets.length;
-
-        for (uint256 i = 0; i < activeMarkets.length;) {
-            bytes32 mId = activeMarkets[i];
-            Position storage pos = positions[mId][trader];
-
-            if (pos.size != 0) {
-                Market storage market = markets[mId];
-                uint256 absSize = _abs(pos.size);
-                uint256 notional = _notional(market.markPrice, absSize);
-
-                int256 pnl = _calculatePnl(pos.entryPrice, market.markPrice, pos.size);
-                positionEquity += int256(pos.margin) + pnl;
-                totalUnrealizedPnl += pnl;
-                totalNotional += notional;
-                totalInitialRequired += (notional * market.initialMarginBps) / BPS;
-                totalMaintenanceRequired += (notional * market.maintenanceMarginBps) / BPS;
-            }
-            unchecked { ++i; }
-        }
-
-        totalEquity = int256(freeBalance) + positionEquity;
-    }
-
     /// @notice Get number of active positions for a trader
     function getActiveMarketCount(address trader) external view returns (uint256) {
         return traderActiveMarkets[trader].length;
@@ -1184,7 +1324,7 @@ contract PerpEngine {
     /// @dev In isolated mode: increases position's margin (reduces leverage)
     ///      In cross mode: moves free balance into position's locked margin
     function addMargin(bytes32 marketId, address trader, uint256 amount)
-        external onlyOperator whenNotPaused marketExists(marketId)
+        external onlyOperator whenNotPaused nonReentrant marketExists(marketId)
     {
         if (amount == 0) revert ZeroAmount();
         Position storage pos = positions[marketId][trader];
@@ -1206,7 +1346,7 @@ contract PerpEngine {
     /// @dev In isolated mode: must keep margin >= maintenance requirement
     ///      In cross mode: must keep total account equity >= total maintenance
     function removeMargin(bytes32 marketId, address trader, uint256 amount)
-        external onlyOperator whenNotPaused marketExists(marketId)
+        external onlyOperator whenNotPaused marketExists(marketId) nonReentrant
     {
         if (amount == 0) revert ZeroAmount();
         Position storage pos = positions[marketId][trader];
@@ -1216,15 +1356,11 @@ contract PerpEngine {
         Market storage market = markets[marketId];
 
         if (traderMarginMode[trader] == MarginMode.CROSS) {
-            // Cross: check total account equity stays above total maintenance after removal
+            // H-2 fix: In cross mode, removing margin from position to free balance
+            // is a wash for total equity. Just check equity >= totalMaint (no subtraction).
             (int256 equity, uint256 totalMaint) = getAccountEquity(trader);
-            int256 equityAfter = equity - int256(amount); // removing margin just moves it to free balance
-            // Actually, removing from position to free balance doesn't change equity
-            // But we need to ensure the position still has some margin
-            // The real constraint: position margin after removal should be > 0
-            // and total equity should still be >= totalMaint
-            if (equityAfter < int256(totalMaint)) {
-                revert InsufficientMargin(totalMaint, equityAfter > 0 ? uint256(equityAfter) : 0);
+            if (equity < int256(totalMaint)) {
+                revert InsufficientMargin(totalMaint, equity > 0 ? uint256(equity) : 0);
             }
         } else {
             // Isolated: check this position stays above maintenance margin
@@ -1251,7 +1387,7 @@ contract PerpEngine {
     ///      Keeper receives reward from the remaining equity.
     ///      This is the cross-margin equivalent of liquidatePosition().
     function liquidateAccount(address trader, address keeper)
-        external onlyOperator whenNotPaused
+        external onlyOperator whenNotPaused nonReentrant
     {
         if (traderMarginMode[trader] != MarginMode.CROSS) revert NotLiquidatable();
         if (!_isAccountLiquidatable(trader)) revert NotLiquidatable();
@@ -1295,7 +1431,16 @@ contract PerpEngine {
             unchecked { ++i; }
         }
 
-        // Clear active markets
+        // M-7 fix: Track liquidation notional for circuit breaker before clearing
+        if (activeMarkets.length > 0 && totalNotional > 0) {
+            _trackLiquidation(activeMarkets[0], totalNotional);
+        }
+
+        // Clear active markets + index mapping
+        for (uint256 j = 0; j < activeMarkets.length;) {
+            delete _activeMarketIndex[trader][activeMarkets[j]];
+            unchecked { ++j; }
+        }
         delete traderActiveMarkets[trader];
 
         // Phase 2: Distribute remaining equity
@@ -1307,7 +1452,12 @@ contract PerpEngine {
             // Underwater: margin stays in engine pool, keeper paid from insurance
             badDebt = -effectiveMargin;
             keeperReward = (totalNotional * 5) / BPS; // 0.05% of total notional
-            vault.internalTransfer(insuranceFund, keeper, keeperReward);
+            // Graceful degradation: if insurance fund is depleted, pay what's available
+            uint256 insuranceBal = vault.balances(insuranceFund);
+            if (keeperReward > insuranceBal) keeperReward = insuranceBal;
+            if (keeperReward > 0) {
+                vault.internalTransfer(insuranceFund, keeper, keeperReward);
+            }
         } else {
             uint256 remaining = uint256(effectiveMargin);
             uint256 maxReward = (totalNotional * 500) / BPS; // cap 5%
@@ -1326,26 +1476,30 @@ contract PerpEngine {
     //               ACTIVE MARKET TRACKING
     // ============================================================
 
+    /// @dev G-06: O(1) add via mapping index
     function _addActiveMarket(address trader, bytes32 marketId) internal {
+        if (_activeMarketIndex[trader][marketId] != 0) return; // already tracked
         bytes32[] storage active = traderActiveMarkets[trader];
-        // Check not already tracked
-        for (uint256 i = 0; i < active.length;) {
-            if (active[i] == marketId) return; // already tracked
-            unchecked { ++i; }
-        }
         active.push(marketId);
+        _activeMarketIndex[trader][marketId] = active.length; // store index+1
     }
 
+    /// @dev G-07: O(1) remove via swap-and-pop with index mapping
     function _removeActiveMarket(address trader, bytes32 marketId) internal {
+        uint256 idx1 = _activeMarketIndex[trader][marketId];
+        if (idx1 == 0) return; // not tracked
+
         bytes32[] storage active = traderActiveMarkets[trader];
-        for (uint256 i = 0; i < active.length;) {
-            if (active[i] == marketId) {
-                active[i] = active[active.length - 1];
-                active.pop();
-                return;
-            }
-            unchecked { ++i; }
+        uint256 lastIdx = active.length - 1;
+        uint256 idx = idx1 - 1;
+
+        if (idx != lastIdx) {
+            bytes32 lastMarket = active[lastIdx];
+            active[idx] = lastMarket;
+            _activeMarketIndex[trader][lastMarket] = idx1; // update moved element's index
         }
+        active.pop();
+        delete _activeMarketIndex[trader][marketId];
     }
 
     /// @notice Check that a trader's total notional exposure doesn't exceed maxExposureBps of vault TVL
@@ -1385,45 +1539,88 @@ contract PerpEngine {
     //                     ADMIN FUNCTIONS
     // ============================================================
 
+    /// @notice Start 2-step ownership transfer (sets pendingOwner)
+    function transferOwnership(address newOwner) external onlyOwner {
+        if (newOwner == address(0)) revert ZeroAddress();
+        pendingOwner = newOwner;
+        emit OwnershipTransferStarted(owner, newOwner);
+    }
+
+    /// @notice Accept ownership (must be called by pendingOwner)
+    function acceptOwnership() external {
+        if (msg.sender != pendingOwner) revert NotOwner();
+        address oldOwner = owner;
+        owner = msg.sender;
+        pendingOwner = address(0);
+        emit OwnershipTransferred(oldOwner, msg.sender);
+    }
+
     function setOperator(address op, bool status) external onlyOwner {
         if (op == address(0)) revert ZeroAddress();
         operators[op] = status;
         emit OperatorUpdated(op, status);
     }
 
+    event MaxPriceAgeUpdated(uint256 oldAge, uint256 newAge);
+    event FeeRecipientUpdated(address indexed oldRecipient, address indexed newRecipient);
+    event InsuranceFundUpdated(address indexed oldFund, address indexed newFund);
+    event FundingPoolUpdated(address indexed oldPool, address indexed newPool);
+    event CircuitBreakerParamsUpdated(uint256 windowSecs, uint256 thresholdBps, uint256 cooldownSecs);
+
     function pause() external onlyOwner {
+        if (paused) revert Paused();
         paused = true;
         emit PauseStatusChanged(true);
     }
 
     function unpause() external onlyOwner {
+        if (!paused) revert NotPaused();
         paused = false;
         emit PauseStatusChanged(false);
     }
 
     function setMaxPriceAge(uint256 newAge) external onlyOwner {
+        if (newAge < 10 || newAge > 3600) revert InvalidParam();
+        uint256 oldAge = maxPriceAge;
         maxPriceAge = newAge;
+        emit MaxPriceAgeUpdated(oldAge, newAge);
     }
 
     function setFeeRecipient(address newRecipient) external onlyOwner {
         if (newRecipient == address(0)) revert ZeroAddress();
+        address old = feeRecipient;
         feeRecipient = newRecipient;
+        emit FeeRecipientUpdated(old, newRecipient);
     }
 
     function setInsuranceFund(address newFund) external onlyOwner {
         if (newFund == address(0)) revert ZeroAddress();
+        address old = insuranceFund;
         insuranceFund = newFund;
+        emit InsuranceFundUpdated(old, newFund);
+    }
+
+    function setFundingPool(address newPool) external onlyOwner {
+        if (newPool == address(0)) revert ZeroAddress();
+        address old = fundingPool;
+        fundingPool = newPool;
+        emit FundingPoolUpdated(old, newPool);
     }
 
     function setMaxExposureBps(uint256 newBps) external onlyOwner {
+        if (newBps > BPS && newBps != 0) revert InvalidParam();
         maxExposureBps = newBps;
         emit ExposureLimitUpdated(newBps);
     }
 
     function setCircuitBreakerParams(uint256 windowSecs, uint256 thresholdBps, uint256 cooldownSecs) external onlyOwner {
+        if (windowSecs < 60 || windowSecs > 86400) revert InvalidParam();
+        if (thresholdBps == 0 || thresholdBps > BPS) revert InvalidParam();
+        if (cooldownSecs < 60 || cooldownSecs > 86400) revert InvalidParam();
         circuitBreakerWindowSecs = windowSecs;
         circuitBreakerThresholdBps = thresholdBps;
         circuitBreakerCooldownSecs = cooldownSecs;
+        emit CircuitBreakerParamsUpdated(windowSecs, thresholdBps, cooldownSecs);
     }
 
     function resetCircuitBreaker() external onlyOwner {
@@ -1442,11 +1639,9 @@ contract PerpEngine {
     {
         delete marketMarginTiers[marketId];
         for (uint256 i = 0; i < tiers.length;) {
-            require(tiers[i].initialMarginBps > 0 && tiers[i].initialMarginBps <= BPS, "Invalid IMR");
-            require(tiers[i].maintenanceMarginBps > 0 && tiers[i].maintenanceMarginBps < tiers[i].initialMarginBps, "Invalid MMR");
-            if (i > 0 && tiers[i].maxNotional != 0) {
-                require(tiers[i].maxNotional > tiers[i-1].maxNotional, "Tiers not sorted");
-            }
+            if (tiers[i].initialMarginBps == 0 || tiers[i].initialMarginBps > BPS) revert InvalidParam();
+            if (tiers[i].maintenanceMarginBps == 0 || tiers[i].maintenanceMarginBps >= tiers[i].initialMarginBps) revert InvalidParam();
+            if (i > 0 && tiers[i].maxNotional != 0 && tiers[i].maxNotional <= tiers[i-1].maxNotional) revert InvalidParam();
             marketMarginTiers[marketId].push(tiers[i]);
             unchecked { ++i; }
         }
@@ -1461,20 +1656,33 @@ contract PerpEngine {
 
     /// @notice Set OI skew cap (5000-10000 BPS, where 7000 = 70% max dominance)
     function setOiSkewCap(uint256 newCapBps) external onlyOwner {
-        require(newCapBps >= 5000 && newCapBps <= BPS, "Invalid skew cap");
+        if (newCapBps < 5000 || newCapBps > BPS) revert InvalidParam();
         oiSkewCapBps = newCapBps;
         emit OiSkewCapUpdated(newCapBps);
     }
 
-    /// @notice View: get margin tiers for a market
-    function getMarginTiers(bytes32 marketId) external view returns (MarginTier[] memory) {
-        return marketMarginTiers[marketId];
+    /// @notice Set reserve factor: max OI notional as % of pool TVL
+    /// @param newFactorBps 0 = disabled, 8000 = 80% of pool TVL
+    function setReserveFactor(uint256 newFactorBps) external onlyOwner {
+        if (newFactorBps > BPS) revert InvalidParam();
+        reserveFactorBps = newFactorBps;
+        emit ReserveFactorUpdated(newFactorBps);
     }
 
-    /// @notice View: calculate required margin for a given notional in a market
-    function getRequiredMargin(bytes32 marketId, uint256 notional, bool isInitial)
-        external view returns (uint256)
-    {
-        return _calculateTieredMargin(marketId, notional, isInitial);
+    /// @notice Configure price impact for a market
+    /// @param marketId The market
+    /// @param impactFactorBps Base impact factor (e.g., 100 = 1% max impact)
+    /// @param impactExponentBps Exponent scale (20000 = quadratic). 0 = disable.
+    function setPriceImpactConfig(
+        bytes32 marketId,
+        uint256 impactFactorBps,
+        uint256 impactExponentBps
+    ) external onlyOwner marketExists(marketId) {
+        priceImpactConfigs[marketId] = PriceImpactConfig({
+            impactFactorBps: impactFactorBps,
+            impactExponentBps: impactExponentBps
+        });
+        emit PriceImpactParamsUpdated(marketId, impactExponentBps, impactFactorBps);
     }
+
 }

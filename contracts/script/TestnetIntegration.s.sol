@@ -61,7 +61,7 @@ contract TestnetIntegration is Script {
         console.log("  InsuranceFund:", address(insurance));
 
         PerpEngine engine = new PerpEngine(
-            address(vault), deployer, deployer, address(insurance)
+            address(vault), deployer, deployer, address(insurance), deployer
         );
         console.log("  PerpEngine:", address(engine));
 

@@ -260,7 +260,7 @@ export default function IntentPanel() {
   const fmtUsd = (v: number) => v >= 1000 ? `$${(v).toLocaleString("en-US", { maximumFractionDigits: 2 })}` : `$${v.toFixed(2)}`;
 
   return (
-    <div className="bg-[#1b1d28] border border-[#252836] rounded-lg overflow-hidden">
+    <div className="bg-[#1c1c20] border border-[#28282e] rounded-lg overflow-hidden">
       {/* Header */}
       <button
         onClick={() => setIsExpanded(!isExpanded)}
@@ -283,7 +283,7 @@ export default function IntentPanel() {
       </button>
 
       {isExpanded && (
-        <div className="border-t border-[#252836]">
+        <div className="border-t border-[#28282e]">
           {/* Input */}
           <div className="p-3">
             <div className="flex gap-2">
@@ -293,7 +293,7 @@ export default function IntentPanel() {
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={onKeyDown}
                 placeholder='Try: "Long BTC 5x, $1000"'
-                className="flex-1 bg-[#141518] border border-[#252836] rounded px-3 py-2 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-purple-500/50"
+                className="flex-1 bg-[#161618] border border-[#28282e] rounded px-3 py-2 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-purple-500/50"
                 disabled={status === "executing"}
               />
               <button
@@ -316,7 +316,7 @@ export default function IntentPanel() {
                   <button
                     key={ex}
                     onClick={() => { setInput(ex); inputRef.current?.focus(); }}
-                    className="text-[9px] px-2 py-1 rounded bg-[#252836] text-gray-400 hover:text-gray-200 hover:bg-[#2a2d3e] transition-colors"
+                    className="text-[9px] px-2 py-1 rounded bg-[#28282e] text-gray-400 hover:text-gray-200 hover:bg-[#2e2e34] transition-colors"
                   >
                     {ex}
                   </button>
@@ -341,7 +341,7 @@ export default function IntentPanel() {
 
           {/* Preview */}
           {status === "preview" && preview && (
-            <div className="mx-3 mb-3 p-3 rounded bg-[#141518] border border-[#252836]">
+            <div className="mx-3 mb-3 p-3 rounded bg-[#161618] border border-[#28282e]">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-[10px] font-bold text-gray-300 uppercase tracking-wider">Order Preview</span>
                 <button

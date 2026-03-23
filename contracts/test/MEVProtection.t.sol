@@ -39,7 +39,7 @@ contract MEVProtectionTest is Test {
         usdc = new MockUSDC();
         vault = new PerpVault(address(usdc), owner, 0);
         insurance = new InsuranceFund(address(vault), owner);
-        engine = new PerpEngine(address(vault), owner, feeRecipient, address(insurance));
+        engine = new PerpEngine(address(vault), owner, feeRecipient, address(insurance), feeRecipient);
         settlement = new OrderSettlement(address(engine), address(vault), feeRecipient, owner);
 
         btcMarket = keccak256(abi.encodePacked("BTC-USD"));
@@ -56,6 +56,7 @@ contract MEVProtectionTest is Test {
         engine.updateMarkPrice(btcMarket, BTC_50K, BTC_50K);
         // Disable exposure limit for MEV tests (tested separately)
         engine.setMaxExposureBps(0);
+        engine.setOiSkewCap(10000); // disable skew cap for tests
         vm.stopPrank();
 
         _deposit(alice, 100_000 * USDC_UNIT);
@@ -86,13 +87,30 @@ contract MEVProtectionTest is Test {
     // ============================================================
 
     function test_mev_autoCommitWithDefaultDelay() public {
-        // With default 2s delay, trades should auto-commit and settle immediately
+        // M-4 fix: Auto-commit removed. With default 2s delay, must pre-commit.
         OrderSettlement.MatchedTrade memory trade = _createTrade(1);
 
-        vm.prank(owner);
-        settlement.settleOne(trade);
+        // Pre-commit order digests
+        bytes32 makerDigest = settlement.getOrderDigest(
+            trade.maker.trader, trade.maker.marketId, trade.maker.isLong,
+            trade.maker.size, trade.maker.price, trade.maker.nonce, trade.maker.expiry
+        );
+        bytes32 takerDigest = settlement.getOrderDigest(
+            trade.taker.trader, trade.taker.marketId, trade.taker.isLong,
+            trade.taker.size, trade.taker.price, trade.taker.nonce, trade.taker.expiry
+        );
 
-        // Should work - auto-commit for delays <= 2s
+        vm.startPrank(owner);
+        settlement.commitOrder(makerDigest);
+        settlement.commitOrder(takerDigest);
+
+        // Wait for 2s delay
+        vm.warp(block.timestamp + 3);
+        engine.updateMarkPrice(btcMarket, BTC_50K, BTC_50K);
+
+        settlement.settleOne(trade);
+        vm.stopPrank();
+
         (int256 size,,,,) = engine.positions(btcMarket, alice);
         assertEq(size, int256(SIZE_UNIT));
     }

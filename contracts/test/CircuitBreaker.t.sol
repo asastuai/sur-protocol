@@ -36,7 +36,7 @@ contract CircuitBreakerTest is Test {
         usdc = new MockUSDC();
         vault = new PerpVault(address(usdc), owner, 0);
         insurance = new InsuranceFund(address(vault), owner);
-        engine = new PerpEngine(address(vault), owner, feeRecipient, address(insurance));
+        engine = new PerpEngine(address(vault), owner, feeRecipient, address(insurance), feeRecipient);
 
         vm.startPrank(owner);
         vault.setOperator(address(engine), true);
@@ -44,6 +44,7 @@ contract CircuitBreakerTest is Test {
         insurance.setOperator(address(engine), true);
         // Disable exposure limit for circuit breaker tests (tested separately)
         engine.setMaxExposureBps(0);
+        engine.setOiSkewCap(10000); // disable skew cap for tests
         vm.stopPrank();
 
         btcMarketId = keccak256(abi.encodePacked("BTC-USD"));
