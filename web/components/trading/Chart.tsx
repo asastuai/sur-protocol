@@ -226,7 +226,7 @@ export function Chart({ market }: ChartProps) {
   const getChartOpts = (w: number, h: number, showTimeAxis: boolean) => ({
     width: w, height: h,
     layout: { background: { color: "#1c1c20" }, textColor: "#6b7280", fontSize: 11, fontFamily: "DM Sans, system-ui, sans-serif" },
-    grid: { vertLines: { color: "transparent" }, horzLines: { color: "transparent" } },
+    grid: { vertLines: { visible: false }, horzLines: { visible: false } },
     rightPriceScale: { borderColor: "#28282e", autoScale: true },
     timeScale: { borderColor: "#28282e", timeVisible: true, secondsVisible: false, barSpacing: 8, visible: showTimeAxis },
     handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
@@ -253,6 +253,7 @@ export function Chart({ market }: ChartProps) {
       const mainChart = createChart(mainContainerRef.current, {
         ...getChartOpts(mainW, mainH, !hasSubIndicator),
         layout: { background: { type: ColorType.Solid, color: "#1c1c20" }, textColor: "#6b7280", fontSize: 11, fontFamily: "DM Sans, system-ui, sans-serif" },
+        grid: { vertLines: { visible: false }, horzLines: { visible: false } },
         rightPriceScale: { borderColor: "#28282e", scaleMargins: { top: 0.05, bottom: 0.05 }, autoScale: true },
         crosshair: {
           mode: mod.CrosshairMode.Normal,
@@ -349,6 +350,7 @@ export function Chart({ market }: ChartProps) {
       const volChart = createChart(volContainerRef.current!, {
         ...getChartOpts(volW, volH, !hasSubIndicator),
         layout: { background: { type: ColorType.Solid, color: "#1c1c20" }, textColor: "#6b7280", fontSize: 10, fontFamily: "DM Sans, system-ui, sans-serif" },
+        grid: { vertLines: { visible: false }, horzLines: { visible: false } },
         rightPriceScale: { borderColor: "#28282e", scaleMargins: { top: 0.1, bottom: 0 }, autoScale: true },
       });
       charts.push(volChart);
@@ -377,6 +379,7 @@ export function Chart({ market }: ChartProps) {
         const subChart = createChart(subContainerRef.current, {
           ...getChartOpts(subW, subH2, true),
           layout: { background: { type: ColorType.Solid, color: "#1c1c20" }, textColor: "#6b7280", fontSize: 10, fontFamily: "DM Sans, system-ui, sans-serif" },
+          grid: { vertLines: { visible: false }, horzLines: { visible: false } },
           rightPriceScale: { borderColor: "#28282e", scaleMargins: { top: 0.1, bottom: 0.1 }, autoScale: true },
         });
         charts.push(subChart);
