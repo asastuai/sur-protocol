@@ -4,14 +4,10 @@ import { useState, useMemo, useCallback, useEffect } from 'react';
 import { useTrading } from '@/providers/TradingProvider';
 import { useTradingZustand, computePaperPnl } from '@/lib/trading-zustand';
 import { MARKETS, type MarketMeta } from '@/lib/constants';
-import { useAccount } from 'wagmi';
-import { useConnectModal } from '@rainbow-me/rainbowkit';
 
 // v2 UI components (FRONT layout)
 import {
-  TradingHeader,
   OrderBookPanel,
-  TradeForm,
   PositionsPanel as V2PositionsPanel,
   MarketSelectorPanel,
 } from '@/components/trading-v2';
@@ -23,7 +19,7 @@ import { Chart } from '@/components/trading/Chart';
 import { OrderPanel } from '@/components/trading/OrderPanel';
 
 // Types
-import type { Market, OrderBook, Trade, Position, Order, WalletState } from '@/lib/front-types';
+import type { Market, OrderBook, Trade, Position, Order } from '@/lib/front-types';
 
 // ============================================================
 //  BRIDGE: Convert real Zustand data → v2 component props
@@ -100,32 +96,6 @@ function useOrderBookBridge(): {
   );
 
   return { orderBook, recentTrades: trades };
-}
-
-function useWalletBridge(): WalletState {
-  const { address, isConnected } = useAccount();
-  const paperBalance = useTradingZustand(s => s.paperBalance);
-  const paperPositions = useTradingZustand(s => s.paperPositions);
-  const markPrice = useTradingZustand(s => s.markPrice);
-
-  const totalMargin = useMemo(() =>
-    paperPositions.reduce((sum, p) => sum + p.margin, 0),
-    [paperPositions]
-  );
-
-  const totalUnrealizedPnl = useMemo(() =>
-    paperPositions.reduce((sum, p) => sum + computePaperPnl(p, markPrice).pnl, 0),
-    [paperPositions, markPrice]
-  );
-
-  return {
-    connected: isConnected || true, // Show paper balance even without wallet
-    address: address || '0xPaperTrading',
-    balance: paperBalance + totalMargin + totalUnrealizedPnl,
-    availableBalance: paperBalance,
-    marginBalance: totalMargin,
-    unrealizedPnl: totalUnrealizedPnl,
-  };
 }
 
 function usePositionsBridge(): {
@@ -263,10 +233,7 @@ export default function TradingPage() {
 
   const { markets, selectedMarket, onSelectMarket } = useMarketBridge();
   const { orderBook, recentTrades } = useOrderBookBridge();
-  const wallet = useWalletBridge();
   const { positions, orders } = usePositionsBridge();
-  const { openConnectModal } = useConnectModal();
-  const { isConnected } = useAccount();
 
   const handleClosePosition = useCallback((id: string) => {
     const mp = useTradingZustand.getState().markPrice;
@@ -277,22 +244,10 @@ export default function TradingPage() {
     useTradingZustand.getState().actions.paperCancelOrder(id);
   }, []);
 
-  const handleConnectWallet = useCallback(() => {
-    openConnectModal?.();
-  }, [openConnectModal]);
-
   if (isMobile) return <MobileTradePage />;
 
   return (
     <div className="flex h-full flex-col bg-background">
-      {/* Header with real market data */}
-      <TradingHeader
-        market={selectedMarket}
-        wallet={wallet}
-        onConnectWallet={handleConnectWallet}
-        onDisconnectWallet={() => {}}
-      />
-
       {/* Connection status */}
       {(state.wsStatus === 'connecting' || state.wsStatus === 'error') && (
         <div className={`h-6 flex items-center justify-center text-[10px] border-b flex-shrink-0 ${
