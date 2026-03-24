@@ -17,6 +17,7 @@
     "next": "^15.1.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "tailwind-merge": "^3.5.0",
     "viem": "^2.21.0",
     "wagmi": "^2.14.0",
     "zustand": "^5.0.12"
