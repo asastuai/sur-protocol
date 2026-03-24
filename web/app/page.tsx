@@ -159,7 +159,16 @@ function MobileTradePage() {
   const [tab, setTab] = useState<MobileTab>('chart');
   const { orderBook, recentTrades } = useOrderBookBridge();
   const { selectedMarket } = useMarketBridge();
-  const { positions } = usePositionsBridge();
+  const { positions, orders } = usePositionsBridge();
+
+  const handleClosePosition = useCallback((id: string) => {
+    const mp = useTradingZustand.getState().markPrice;
+    useTradingZustand.getState().actions.paperClosePosition(id, mp, 6);
+  }, []);
+
+  const handleCancelOrder = useCallback((id: string) => {
+    useTradingZustand.getState().actions.paperCancelOrder(id);
+  }, []);
 
   return (
     <div className="h-full flex flex-col bg-background">
@@ -199,11 +208,9 @@ function MobileTradePage() {
         {tab === 'positions' && (
           <V2PositionsPanel
             positions={positions}
-            orders={[]}
-            onClosePosition={(id) => {
-              const mp = useTradingZustand.getState().markPrice;
-              useTradingZustand.getState().actions.paperClosePosition(id, mp, 6);
-            }}
+            orders={orders}
+            onClosePosition={handleClosePosition}
+            onCancelOrder={handleCancelOrder}
           />
         )}
       </div>

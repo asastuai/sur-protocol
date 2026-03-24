@@ -169,7 +169,7 @@ export const initialState: TradingState = {
   lastOrderStatus: null,
   orderError: null,
   nextNonce: 1,
-  paperMode: false,
+  paperMode: true,
   paperWalletBalance: 10_000,
   paperBalance: PAPER_INITIAL_BALANCE,
   paperPositions: [],

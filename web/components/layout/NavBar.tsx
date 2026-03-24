@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { LanguageSelector } from "./LanguageSelector";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
+import { useTradingZustand } from "@/lib/trading-zustand";
 
 const NAV_ITEMS = [
   { label: "Trade", href: "/" },
@@ -33,6 +34,8 @@ export function NavBar() {
   const [moreOpen, setMoreOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const moreRef = useRef<HTMLDivElement>(null);
+  const paperMode = useTradingZustand(s => s.paperMode);
+  const togglePaperMode = useTradingZustand(s => s.actions.togglePaperMode);
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -174,8 +177,20 @@ export function NavBar() {
         </div>
       )}
 
-      {/* Right: Theme + Language + Wallet */}
+      {/* Right: Paper Toggle + Theme + Language + Wallet */}
       <div className="flex items-center gap-2">
+        <button
+          onClick={togglePaperMode}
+          title={paperMode ? "Paper Trading (simulated)" : "Live Trading (real orders)"}
+          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold transition-all border ${
+            paperMode
+              ? "bg-amber-500/15 text-amber-400 border-amber-500/30 hover:bg-amber-500/25"
+              : "bg-sur-green/15 text-sur-green border-sur-green/30 hover:bg-sur-green/25"
+          }`}
+        >
+          <span className={`w-1.5 h-1.5 rounded-full ${paperMode ? "bg-amber-400 animate-pulse" : "bg-sur-green"}`} />
+          {paperMode ? "Paper" : "Live"}
+        </button>
         <ThemeToggle />
         <LanguageSelector />
         <ConnectButton.Custom>
