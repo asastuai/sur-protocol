@@ -274,8 +274,17 @@ export function OrderPanel() {
 
   return (
     <div className="border-t border-sur-border">
-      <div className="px-3 py-2 border-b border-sur-border text-[11px] font-semibold uppercase tracking-wider text-sur-muted">
-        Place Order
+      <div className="px-3 py-2 border-b border-sur-border flex items-center justify-between">
+        <span className="text-[11px] font-semibold uppercase tracking-wider text-sur-muted">Place Order</span>
+        {state.paperMode && (
+          <button
+            onClick={() => { dispatch({ type: "PAPER_RESET" }); setSize(""); setPrice(""); }}
+            className="text-[9px] text-sur-muted hover:text-sur-red transition-colors"
+            title="Reset paper trading balance and positions"
+          >
+            Reset
+          </button>
+        )}
       </div>
 
       {/* Long / Short */}

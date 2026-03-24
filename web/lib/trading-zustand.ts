@@ -322,7 +322,10 @@ export const useTradingZustand = create<TradingStore>()((set, get) => ({
       const margin = Math.max(tieredMargin, notional / leverage);
       const fee = notional * (feeBps / 10000);
       const totalCost = margin + fee;
-      if (totalCost > s.paperBalance) return;
+      if (totalCost > s.paperBalance) {
+        set({ lastOrderStatus: null, orderError: `Insufficient balance ($${s.paperBalance.toFixed(2)} available, $${totalCost.toFixed(2)} required)` });
+        return;
+      }
 
       const isLong = side === "buy";
       const existing = s.paperPositions.find(p => p.market === market);
@@ -424,7 +427,10 @@ export const useTradingZustand = create<TradingStore>()((set, get) => ({
       const priceForMargin = orderType === "stopMarket" ? (stopPrice || price) : price;
       const notional = priceForMargin * size;
       const margin = notional / leverage;
-      if (margin > s.paperBalance) return;
+      if (margin > s.paperBalance) {
+        set({ lastOrderStatus: null, orderError: `Insufficient balance ($${s.paperBalance.toFixed(2)} available, $${margin.toFixed(2)} required)` });
+        return;
+      }
 
       set({
         paperBalance: s.paperBalance - margin,
