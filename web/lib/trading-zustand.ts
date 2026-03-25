@@ -424,6 +424,16 @@ export const useTradingZustand = create<TradingStore>()((set, get) => ({
       const s = get();
       const { market, marketId, side, price, size, leverage, tp, sl, orderType: ot, stopPrice, ocoGroupId } = params;
       const orderType = ot || "limit";
+
+      // Validate limit price vs current mark price to prevent immediate fill
+      if (orderType === "limit" && s.markPrice > 0 && price > 0) {
+        const wouldFillImmediately = (side === "buy" && price >= s.markPrice) || (side === "sell" && price <= s.markPrice);
+        if (wouldFillImmediately) {
+          set({ lastOrderStatus: null, orderError: `Limit price $${price.toLocaleString()} would execute immediately (mark: $${s.markPrice.toLocaleString()}). Use market order instead.` });
+          return;
+        }
+      }
+
       const priceForMargin = orderType === "stopMarket" ? (stopPrice || price) : price;
       const notional = priceForMargin * size;
       const margin = notional / leverage;
