@@ -26,7 +26,7 @@ interface LeaderboardEntry extends PointsData {
   rank: number;
 }
 
-const API_BASE = process.env.NEXT_PUBLIC_WS_URL?.replace("wss://", "https://").replace("ws://", "http://") || "http://localhost:3002";
+import { API_BASE } from "@/lib/api-url";
 
 export default function PointsPage() {
   const { isConnected, address } = useAccount();

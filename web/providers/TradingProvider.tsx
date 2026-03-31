@@ -94,12 +94,25 @@ export function TradingProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  // ---- WebSocket Send ----
+  // ---- WebSocket Send (with retry + rate limit) ----
+  const pendingRef = useRef<any[]>([]);
+  const sendCountRef = useRef(0);
+  const sendResetRef = useRef(0);
   const send = useCallback((data: any) => {
+    // Rate limit: max 10 messages per second
+    const now = Date.now();
+    if (now - sendResetRef.current > 1000) {
+      sendCountRef.current = 0;
+      sendResetRef.current = now;
+    }
+    if (sendCountRef.current >= 10) return;
+    sendCountRef.current++;
+
+    const msg = JSON.stringify(data, (_k, v) => typeof v === "bigint" ? v.toString() : v);
     if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify(data, (_k, v) =>
-        typeof v === "bigint" ? v.toString() : v
-      ));
+      wsRef.current.send(msg);
+    } else {
+      pendingRef.current.push(msg);
     }
   }, []);
 
@@ -144,14 +157,14 @@ export function TradingProvider({ children }: { children: ReactNode }) {
         a.orderCancelled(msg.orderId);
         break;
       case "error":
-        console.warn("[WS] Server error:", msg.message);
+        // console.warn("[WS] Server error:", msg.message);
         break;
     }
   }, []);
 
   // ---- WebSocket Connection ----
   const connect = useCallback(() => {
-    if (!WS_URL || WS_URL === "ws://localhost:3002" && typeof window !== "undefined" && window.location.hostname !== "localhost") {
+    if (!WS_URL || (WS_URL.includes("localhost") && typeof window !== "undefined" && window.location.hostname !== "localhost")) {
       actions.setWsStatus("disconnected");
       return;
     }
@@ -163,6 +176,11 @@ export function TradingProvider({ children }: { children: ReactNode }) {
     ws.onopen = () => {
       actions.setWsStatus("connected");
       retriesRef.current = 0;
+      // Flush queued messages
+      while (pendingRef.current.length > 0) {
+        const msg = pendingRef.current.shift();
+        if (msg) ws.send(msg);
+      }
 
       ws.send(JSON.stringify({
         type: "subscribe",

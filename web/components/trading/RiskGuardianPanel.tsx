@@ -13,7 +13,8 @@
 import { useState, useEffect, useCallback } from "react";
 import { useTrading } from "@/providers/TradingProvider";
 
-const GUARDIAN_URL = process.env.NEXT_PUBLIC_RISK_GUARDIAN_URL || "http://localhost:3005";
+const GUARDIAN_URL = process.env.NEXT_PUBLIC_RISK_GUARDIAN_URL || "";
+const GUARDIAN_AVAILABLE = !!GUARDIAN_URL && !GUARDIAN_URL.includes("localhost");
 
 type DefenseLevel = "safe" | "caution" | "warning" | "danger" | "critical";
 
@@ -78,6 +79,17 @@ export default function RiskGuardianPanel() {
   const [loading, setLoading] = useState(false);
   const [connected, setConnected] = useState(false);
   const [subscribing, setSubscribing] = useState(false);
+
+  if (!GUARDIAN_AVAILABLE) {
+    return (
+      <div className="flex items-center justify-center h-full p-8 text-center">
+        <div>
+          <p className="text-muted-foreground text-sm font-medium mb-1">Risk Guardian</p>
+          <p className="text-muted-foreground/60 text-xs">Coming soon — automated risk management</p>
+        </div>
+      </div>
+    );
+  }
 
   // Use a placeholder address for paper trading
   const traderAddress = "0x_paper_trader";

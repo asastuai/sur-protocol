@@ -6,7 +6,7 @@ import { useState, useEffect, useCallback } from "react";
 //                    API CONFIG
 // ============================================================
 
-const API = process.env.NEXT_PUBLIC_WS_URL?.replace('wss://', 'https://').replace('ws://', 'http://') || 'http://localhost:3002';
+import { API_BASE as API } from "@/lib/api-url";
 
 // ============================================================
 //                    TYPES

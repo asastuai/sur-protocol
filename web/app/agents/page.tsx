@@ -419,12 +419,10 @@ const { preview } = await fetch("https://api.sur.exchange:3004/v1/intent/parse",
 }).then(r => r.json());
 
 // Step 2: Agent reviews preview
-console.log(preview.execution);
 // → { market: "ETH-USD", side: "short", size: 2.85, leverage: 10,
 //     margin: 500, stopLoss: 1802.50, maxLoss: 500, fees: 1.05 }
 
 if (preview.warnings.length > 0) {
-  console.log("Warnings:", preview.warnings);
 }
 
 // Step 3: Execute
@@ -525,7 +523,6 @@ const status = await fetch(
   "https://api.sur.exchange:3005/v1/guardian/status/" + agentWallet.address
 ).then(r => r.json());
 
-console.log(status);
 // → { subscribed: true, stats: {
 //     totalAlerts: 12, totalInterventions: 3,
 //     totalFeesCharged: 8.50,

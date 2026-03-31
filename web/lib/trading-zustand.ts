@@ -212,9 +212,12 @@ export function computePaperPnl(pos: PaperPosition, markPrice: number) {
     ? (markPrice - pos.entryPrice) * pos.size
     : (pos.entryPrice - markPrice) * pos.size;
   const pnlPct = pos.margin > 0 ? (pnl / pos.margin) * 100 : 0;
+  // Use maintenance margin ratio: margin * (1 - mmBps/10000) for liquidation threshold
+  // Default 2.5% maintenance margin (250 bps) if not tiered
+  const mmRatio = 1 - 0.025;
   const liqPrice = pos.side === "long"
-    ? pos.entryPrice - (pos.margin * 0.95) / pos.size
-    : pos.entryPrice + (pos.margin * 0.95) / pos.size;
+    ? pos.entryPrice - (pos.margin * mmRatio) / pos.size
+    : pos.entryPrice + (pos.margin * mmRatio) / pos.size;
   return { pnl, pnlPct, liqPrice };
 }
 

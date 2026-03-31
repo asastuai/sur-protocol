@@ -43,10 +43,13 @@ export function useWallet() {
     isCorrectChain: false,
   });
 
+  const [error, setError] = useState<string | null>(null);
+
   // Connect wallet (production: use RainbowKit's openConnectModal)
   const connect = useCallback(async () => {
+    setError(null);
     if (typeof window === "undefined" || !window.ethereum) {
-      console.warn("No wallet detected. Install MetaMask or Coinbase Wallet.");
+      setError("No wallet detected. Install MetaMask or Coinbase Wallet.");
       return;
     }
 
@@ -112,8 +115,9 @@ export function useWallet() {
           isCorrectChain: newChainId === CHAIN.id,
         }));
       });
-    } catch (err) {
-      console.error("Wallet connection failed:", err);
+    } catch (err: any) {
+      const msg = err?.code === 4001 ? "Connection rejected by user" : "Wallet connection failed. Try again.";
+      setError(msg);
     }
   }, []);
 
@@ -183,6 +187,7 @@ export function useWallet() {
     connect,
     disconnect,
     signOrder,
+    error,
   };
 }
 

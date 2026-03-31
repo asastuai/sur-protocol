@@ -54,7 +54,8 @@ interface IntentPreview {
 
 type IntentStatus = "idle" | "parsing" | "preview" | "executing" | "done" | "error";
 
-const INTENT_ENGINE_URL = process.env.NEXT_PUBLIC_INTENT_ENGINE_URL || "http://localhost:3004";
+const INTENT_ENGINE_URL = process.env.NEXT_PUBLIC_INTENT_ENGINE_URL || "";
+const INTENT_AVAILABLE = !!INTENT_ENGINE_URL && !INTENT_ENGINE_URL.includes("localhost");
 
 const EXAMPLES = [
   "Long BTC 5x, $1000",
@@ -177,6 +178,17 @@ export default function IntentPanel() {
   const [status, setStatus] = useState<IntentStatus>("idle");
   const [preview, setPreview] = useState<IntentPreview | null>(null);
   const [error, setError] = useState("");
+
+  if (!INTENT_AVAILABLE) {
+    return (
+      <div className="flex items-center justify-center h-full p-8 text-center">
+        <div>
+          <p className="text-muted-foreground text-sm font-medium mb-1">Intent Engine</p>
+          <p className="text-muted-foreground/60 text-xs">Coming soon — natural language trading</p>
+        </div>
+      </div>
+    );
+  }
   const [isExpanded, setIsExpanded] = useState(false);
   const [history, setHistory] = useState<string[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);

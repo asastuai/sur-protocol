@@ -4,6 +4,7 @@ import { useState, useMemo, useCallback, useEffect } from 'react';
 import { useTrading } from '@/providers/TradingProvider';
 import { useTradingZustand, computePaperPnl } from '@/lib/trading-zustand';
 import { MARKETS, type MarketMeta } from '@/lib/constants';
+import { ErrorBoundary } from '@/components/layout/ErrorBoundary';
 
 // v2 UI components (FRONT layout)
 import {
@@ -251,9 +252,10 @@ export default function TradingPage() {
     useTradingZustand.getState().actions.paperCancelOrder(id);
   }, []);
 
-  if (isMobile) return <MobileTradePage />;
+  if (isMobile) return <ErrorBoundary fallbackPage="trading"><MobileTradePage /></ErrorBoundary>;
 
   return (
+    <ErrorBoundary fallbackPage="trading">
     <div className="flex h-full flex-col bg-background">
       {/* Connection status */}
       {(state.wsStatus === 'connecting' || state.wsStatus === 'error') && (
@@ -339,5 +341,6 @@ export default function TradingPage() {
         </div>
       </div>
     </div>
+    </ErrorBoundary>
   );
 }

@@ -154,7 +154,7 @@ export function TradeForm({ market, availableBalance, onSubmit }: TradeFormProps
           <input
             type="range"
             min="1"
-            max="100"
+            max="50"
             value={leverage}
             onChange={(e) => setLeverage(parseInt(e.target.value))}
             className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-secondary [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary [&::-webkit-slider-thumb]:shadow-lg"
