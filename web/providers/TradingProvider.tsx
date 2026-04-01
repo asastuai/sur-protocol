@@ -218,6 +218,27 @@ export function TradingProvider({ children }: { children: ReactNode }) {
     };
   }, [connect]);
 
+  // ---- Demo orderbook when no WS (dev/preview mode) ----
+  useEffect(() => {
+    // Only run demo if WS is not connected after 3s
+    const timeout = setTimeout(() => {
+      const store = useTradingZustand.getState();
+      if (store.wsStatus !== "connected" && store.bids.length === 0) {
+        const { createDemoOrderbook } = require("@/lib/demo-orderbook");
+        const demo = createDemoOrderbook();
+        const interval = setInterval(() => {
+          const realPrice = useTradingZustand.getState().markPrice;
+          const { bids, asks, trade } = demo.tick(realPrice > 0 ? realPrice : undefined);
+          const a = useTradingZustand.getState().actions;
+          a.updateOrderbook(bids, asks);
+          if (trade) a.addTrade(trade);
+        }, 1500);
+        return () => clearInterval(interval);
+      }
+    }, 3000);
+    return () => clearTimeout(timeout);
+  }, []);
+
   // ---- Load paper mode preference ----
   useEffect(() => {
     try {

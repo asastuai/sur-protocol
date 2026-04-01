@@ -265,7 +265,11 @@ export const useTradingZustand = create<TradingStore>()((set, get) => ({
       const spread = bestAsk > 0 && bestBid > 0 ? bestAsk - bestBid : 0;
       const midPrice = bestBid > 0 && bestAsk > 0 ? (bestBid + bestAsk) / 2 : (bestBid || bestAsk);
       const prev = get().markPrice;
-      const newMarkPrice = midPrice > 0 ? midPrice : prev;
+      // Only update markPrice from orderbook if no external feed (Binance) has set it yet,
+      // or if the difference is tiny (same source). Prevents demo orderbook from
+      // overriding real Binance prices and causing chart oscillation.
+      const externalPriceActive = prev > 10000; // Binance prices are in the thousands
+      const newMarkPrice = externalPriceActive ? prev : (midPrice > 0 ? midPrice : prev);
       const dir = newMarkPrice >= prev ? "up" as const : "down" as const;
       set({
         bids, asks, spread,
