@@ -109,6 +109,7 @@ export function Announcements() {
           {/* Dismiss */}
           <button
             onClick={dismiss}
+            aria-label="Dismiss announcement"
             className="text-sur-muted hover:text-sur-text transition-colors flex-shrink-0 p-0.5"
             title="Dismiss"
           >

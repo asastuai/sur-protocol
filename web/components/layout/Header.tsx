@@ -38,6 +38,8 @@ export function Header() {
         <div className="relative" ref={dropdownRef}>
           <button
             onClick={() => setMarketOpen(!marketOpen)}
+            aria-label="Select market"
+            aria-expanded={marketOpen}
             className="flex items-center gap-2 px-2.5 py-1 rounded hover:bg-white/[0.04] transition-colors"
           >
             <span className="font-semibold text-sm">{state.selectedMarket}</span>
@@ -105,6 +107,7 @@ export function Header() {
       <div className="flex items-center gap-3">
         {/* Paper Trading Toggle */}
         <button
+          aria-label={state.paperMode ? "Switch to live trading" : "Switch to paper trading"}
           onClick={() => dispatch({ type: "TOGGLE_PAPER_MODE" })}
           className={`flex items-center gap-2 px-2.5 py-1 rounded-md text-[10px] font-semibold uppercase tracking-wider transition-all ${
             state.paperMode
