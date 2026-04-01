@@ -33,6 +33,8 @@ export function OrderBookPanel({
   const [flashStates, setFlashStates] = useState<FlashState>({});
   const [newTradeIds, setNewTradeIds] = useState<Set<string>>(new Set());
 
+  const isLoading = orderBook.bids.length === 0 && orderBook.asks.length === 0;
+
   const prevBidsRef = useRef<Map<number, number>>(new Map());
   const prevAsksRef = useRef<Map<number, number>>(new Map());
   const prevTradeIdsRef = useRef<Set<string>>(new Set());
@@ -150,7 +152,16 @@ export function OrderBookPanel({
         </div>
       </div>
 
-      {viewMode !== 'trades' && (
+      {isLoading && (
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-center">
+            <div className="w-5 h-5 border-2 border-primary/30 border-t-primary rounded-full animate-spin mx-auto mb-2" />
+            <p className="text-[10px] text-muted-foreground">Loading orderbook...</p>
+          </div>
+        </div>
+      )}
+
+      {!isLoading && viewMode !== 'trades' && (
         <div className="flex items-center gap-1 px-3 py-1.5 border-b border-border/50">
           <button onClick={() => setBookMode('both')} className={cn("p-1 rounded transition-colors", bookMode === 'both' ? "bg-secondary" : "hover:bg-secondary/50")} title="Show both">
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
