@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useMemo, useCallback, useEffect } from 'react';
+import dynamic from 'next/dynamic';
 import { useTrading } from '@/providers/TradingProvider';
 import { useTradingZustand, computePaperPnl } from '@/lib/trading-zustand';
 import { MARKETS, type MarketMeta } from '@/lib/constants';
@@ -13,11 +14,16 @@ import {
   MarketSelectorPanel,
 } from '@/components/trading-v2';
 
-// Real TradingView chart
-import { Chart } from '@/components/trading/Chart';
+// Heavy components — lazy loaded for faster initial render
+const Chart = dynamic(() => import('@/components/trading/Chart').then(m => m.Chart), {
+  ssr: false,
+  loading: () => <div className="flex items-center justify-center h-full bg-sur-bg text-sur-muted text-xs">Loading chart...</div>,
+});
 
-// Real order panel (paper trading engine)
-import { OrderPanel } from '@/components/trading/OrderPanel';
+const OrderPanel = dynamic(() => import('@/components/trading/OrderPanel').then(m => m.OrderPanel), {
+  ssr: false,
+  loading: () => <div className="flex items-center justify-center h-full bg-sur-bg text-sur-muted text-xs">Loading...</div>,
+});
 
 // Types
 import type { Market, OrderBook, Trade, Position, Order } from '@/lib/front-types';

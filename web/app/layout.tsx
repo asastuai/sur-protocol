@@ -7,8 +7,15 @@ import { Announcements } from "@/components/layout/Announcements";
 import { ErrorBoundary } from "@/components/layout/ErrorBoundary";
 
 export const metadata: Metadata = {
-  title: "SUR Protocol | Trade Perpetual Futures",
-  description: "The first perpetual futures DEX built for Argentina and Latin America. Trade BTC and ETH perpetuals with up to 20x leverage on Base L2.",
+  title: "SUR Protocol | Trade Perpetual Futures on Base",
+  description: "The first perpetual futures DEX built for Argentina and Latin America. Trade BTC and ETH perpetuals with up to 50x leverage on Base L2. Paper trading available.",
+  keywords: ["perpetual futures", "DEX", "Base L2", "BTC", "ETH", "leverage trading", "DeFi", "Argentina"],
+  robots: "index, follow",
+  openGraph: {
+    title: "SUR Protocol | Perpetual Futures DEX",
+    description: "Trade BTC and ETH perpetuals with up to 50x leverage on Base L2",
+    type: "website",
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -30,9 +37,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <div className="h-screen flex flex-col">
               <NavBar />
               <ErrorBoundary fallbackPage="this page">
-                <div id="main-content" className="flex-1 min-h-0">
+                <main id="main-content" className="flex-1 min-h-0" role="main">
                   {children}
-                </div>
+                </main>
               </ErrorBoundary>
               <Announcements />
             </div>
