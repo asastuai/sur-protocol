@@ -200,6 +200,7 @@ export function Chart({ market }: ChartProps) {
   const indicatorMenuRef = useRef<HTMLDivElement>(null);
   const syncingRef = useRef(false);
   const liveCandlesRef = useRef<LiveCandle[]>([]);
+  const lastHistoricCloseRef = useRef<number>(0);
   const { state } = useTrading();
   const lastPriceDirection = useTradingZustand(s => s.lastPriceDirection);
 
@@ -302,7 +303,9 @@ export function Chart({ market }: ChartProps) {
       }
 
       if (data.candles.length > 0) {
-        currentCandleRef.current = { ...data.candles[data.candles.length - 1] };
+        const lastCandle = data.candles[data.candles.length - 1];
+        currentCandleRef.current = { ...lastCandle };
+        lastHistoricCloseRef.current = lastCandle.close;
       }
 
       // Overlay indicators (MA, EMA, BB, VWAP)
@@ -443,6 +446,9 @@ export function Chart({ market }: ChartProps) {
       if (liveCandlesRef.current.length > 0) {
         saveLiveCandles(market, liveCandlesRef.current);
       }
+      // Clear live candles so the next market starts fresh
+      liveCandlesRef.current = [];
+      lastHistoricCloseRef.current = 0;
       observers.forEach((o) => o.disconnect());
       charts.forEach((c) => { try { c.remove(); } catch {} });
       chartRef.current = null;
@@ -461,6 +467,15 @@ export function Chart({ market }: ChartProps) {
     if (!mainSeriesRef.current || state.markPrice <= 0) return;
 
     const price = state.markPrice;
+
+    // Guard: don't render live candles until markPrice is coherent with historical data.
+    // After a market switch, the markPrice may still reflect the old market for a few ticks.
+    const histClose = lastHistoricCloseRef.current;
+    if (histClose > 0) {
+      const deviation = Math.abs(price - histClose) / histClose;
+      if (deviation > 0.20) return; // >20% off historical close — stale price from old market
+    }
+
     const tfConfig = TIMEFRAMES.find(t => t.label === selectedTf) || TIMEFRAMES[0];
     const interval = tfConfig.seconds;
     const now = Math.floor(Date.now() / 1000);
