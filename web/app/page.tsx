@@ -3,7 +3,7 @@
 import { useState, useMemo, useCallback, useEffect } from 'react';
 import { useTrading } from '@/providers/TradingProvider';
 import { useTradingZustand, computePaperPnl } from '@/lib/trading-zustand';
-import { MARKETS, type MarketMeta } from '@/lib/constants';
+import { MARKETS, type MarketMeta, BINANCE_SYMBOLS, BINANCE_REST_URL } from '@/lib/constants';
 import { ErrorBoundary } from '@/components/layout/ErrorBoundary';
 
 // v2 UI components (FRONT layout)
@@ -37,23 +37,60 @@ function useMarketBridge(): {
   const volume24h = useTradingZustand(s => s.volume24h);
   const fundingRate = useTradingZustand(s => s.fundingRate);
 
+  // Fetch all market prices/24h stats from Binance for the sidebar
+  const [allPrices, setAllPrices] = useState<Record<string, { price: number; change24h: number; volume24h: number }>>({});
+
+  useEffect(() => {
+    let cancelled = false;
+    async function fetchAll() {
+      try {
+        const symbols = MARKETS.map(m => BINANCE_SYMBOLS[m.name]?.toUpperCase()).filter(Boolean);
+        const url = `${BINANCE_REST_URL}/ticker/24hr?symbols=${encodeURIComponent(JSON.stringify(symbols))}`;
+        const res = await fetch(url);
+        if (!res.ok || cancelled) return;
+        const data = await res.json();
+        const map: Record<string, { price: number; change24h: number; volume24h: number }> = {};
+        for (const ticker of data) {
+          const marketName = Object.entries(BINANCE_SYMBOLS).find(
+            ([, sym]) => sym.toUpperCase() === ticker.symbol
+          )?.[0];
+          if (marketName) {
+            map[marketName] = {
+              price: parseFloat(ticker.lastPrice) || 0,
+              change24h: parseFloat(ticker.priceChangePercent) || 0,
+              volume24h: parseFloat(ticker.quoteVolume) || 0,
+            };
+          }
+        }
+        if (!cancelled) setAllPrices(map);
+      } catch {}
+    }
+    fetchAll();
+    const iv = setInterval(fetchAll, 30_000); // refresh every 30s
+    return () => { cancelled = true; clearInterval(iv); };
+  }, []);
+
   const markets: Market[] = useMemo(() =>
-    MARKETS.map(m => ({
-      symbol: m.name,
-      baseAsset: m.baseAsset,
-      quoteAsset: m.quoteAsset,
-      price: m.name === state.selectedMarket ? markPrice : 0,
-      change24h: m.name === state.selectedMarket ? change24h : 0,
-      high24h: 0,
-      low24h: 0,
-      volume24h: m.name === state.selectedMarket ? volume24h : 0,
-      openInterest: 0,
-      fundingRate: m.name === state.selectedMarket ? fundingRate / 100 : 0,
-      nextFunding: '08:00:00',
-      markPrice: m.name === state.selectedMarket ? markPrice : 0,
-      indexPrice: m.name === state.selectedMarket ? markPrice : 0,
-    })),
-    [state.selectedMarket, markPrice, change24h, volume24h, fundingRate]
+    MARKETS.map(m => {
+      const isSelected = m.name === state.selectedMarket;
+      const ext = allPrices[m.name];
+      return {
+        symbol: m.name,
+        baseAsset: m.baseAsset,
+        quoteAsset: m.quoteAsset,
+        price: isSelected ? markPrice : (ext?.price ?? 0),
+        change24h: isSelected ? change24h : (ext?.change24h ?? 0),
+        high24h: 0,
+        low24h: 0,
+        volume24h: isSelected ? volume24h : (ext?.volume24h ?? 0),
+        openInterest: 0,
+        fundingRate: isSelected ? fundingRate / 100 : 0,
+        nextFunding: '08:00:00',
+        markPrice: isSelected ? markPrice : (ext?.price ?? 0),
+        indexPrice: isSelected ? markPrice : (ext?.price ?? 0),
+      };
+    }),
+    [state.selectedMarket, markPrice, change24h, volume24h, fundingRate, allPrices]
   );
 
   const selectedMarket = useMemo(() =>

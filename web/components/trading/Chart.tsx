@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useTrading } from "@/providers/TradingProvider";
+import { useTradingZustand } from "@/lib/trading-zustand";
 import { BINANCE_SYMBOLS, BINANCE_REST_URL } from "@/lib/constants";
 
 // ============================================================
@@ -200,6 +201,7 @@ export function Chart({ market }: ChartProps) {
   const syncingRef = useRef(false);
   const liveCandlesRef = useRef<LiveCandle[]>([]);
   const { state } = useTrading();
+  const lastPriceDirection = useTradingZustand(s => s.lastPriceDirection);
 
   // Which sub-chart indicators are active?
   const hasSubIndicator = activeIndicators.some(k => ["rsi", "macd"].includes(k));
@@ -257,8 +259,8 @@ export function Chart({ market }: ChartProps) {
         rightPriceScale: { borderColor: "#28282e", scaleMargins: { top: 0.05, bottom: 0.05 }, autoScale: true },
         crosshair: {
           mode: mod.CrosshairMode.Normal,
-          vertLine: { color: "#0052FF60", width: 1, style: mod.LineStyle.Dashed, labelBackgroundColor: "#0052FF" },
-          horzLine: { color: "#0052FF60", width: 1, style: mod.LineStyle.Dashed, labelBackgroundColor: "#0052FF" },
+          vertLine: { color: "#9CA3AF50", width: 1, style: mod.LineStyle.Dashed, labelBackgroundColor: "#6B7280" },
+          horzLine: { color: "#9CA3AF50", width: 1, style: mod.LineStyle.Dashed, labelBackgroundColor: "#6B7280" },
         },
         localization: {
           priceFormatter: (price: number) => price.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
@@ -506,11 +508,12 @@ export function Chart({ market }: ChartProps) {
       if (priceLineRef.current) {
         try { mainSeriesRef.current.removePriceLine(priceLineRef.current); } catch {}
       }
+      const lineColor = lastPriceDirection === "up" ? "#0ECB81" : "#F6465D";
       priceLineRef.current = mainSeriesRef.current.createPriceLine({
-        price, color: "#0052FF", lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "",
+        price, color: lineColor, lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "",
       });
     }
-  }, [state.markPrice, selectedTf, chartType, market]);
+  }, [state.markPrice, selectedTf, chartType, market, lastPriceDirection]);
 
   // Live mouse position for drawing preview
   const mousePosRef = useRef<{ x: number; y: number; price: number; time: number } | null>(null);

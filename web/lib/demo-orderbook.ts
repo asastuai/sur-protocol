@@ -64,8 +64,8 @@ export function createDemoOrderbook() {
         currentPrice += (BASE_PRICE - currentPrice) * 0.005;
       }
 
-      // Only modify 1-2 random levels per tick (not all)
-      const modCount = Math.random() > 0.6 ? 2 : 1;
+      // Modify 3-5 random levels per tick for visual activity
+      const modCount = 3 + Math.floor(Math.random() * 3);
       for (let i = 0; i < modCount; i++) {
         const idx = Math.floor(Math.random() * 15);
         // Slightly change the size of one level
@@ -77,8 +77,8 @@ export function createDemoOrderbook() {
       recalcTotals(bids);
       recalcTotals(asks);
 
-      // Trade only sometimes (40% chance)
-      const trade: TradeEntry | null = Math.random() > 0.6 ? {
+      // Trade most ticks (80% chance) for active feel
+      const trade: TradeEntry | null = Math.random() > 0.2 ? {
         id: `demo-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
         price: Math.round((currentPrice + (Math.random() - 0.5) * 2) * 100) / 100,
         size: Math.round((0.001 + Math.random() * 0.05) * 10000) / 10000,

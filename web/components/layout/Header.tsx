@@ -48,7 +48,7 @@ export function Header() {
             </svg>
           </button>
           {marketOpen && (
-            <div className="absolute top-full left-0 mt-1 bg-sur-surface border border-sur-border rounded-md shadow-xl z-50 min-w-[140px] animate-fade-in">
+            <div className="absolute top-full left-0 mt-1 bg-sur-surface border border-sur-border rounded-md shadow-xl z-50 min-w-[160px] max-h-[400px] overflow-y-auto animate-fade-in">
               {MARKETS.map((m) => (
                 <button
                   key={m.name}

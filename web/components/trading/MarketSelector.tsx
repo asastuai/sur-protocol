@@ -28,6 +28,19 @@ interface MarketInfo {
 const MARKETS: MarketInfo[] = [
   { name: "BTC-USD", displayName: "Bitcoin", ticker: "BTC", category: "crypto", type: "crypto", maxLeverage: 50 },
   { name: "ETH-USD", displayName: "Ethereum", ticker: "ETH", category: "crypto", type: "crypto", maxLeverage: 50 },
+  { name: "SOL-USD", displayName: "Solana", ticker: "SOL", category: "crypto", type: "crypto", maxLeverage: 25 },
+  { name: "BNB-USD", displayName: "BNB", ticker: "BNB", category: "crypto", type: "crypto", maxLeverage: 25 },
+  { name: "XRP-USD", displayName: "XRP", ticker: "XRP", category: "crypto", type: "crypto", maxLeverage: 20 },
+  { name: "DOGE-USD", displayName: "Dogecoin", ticker: "DOGE", category: "crypto", type: "crypto", maxLeverage: 20 },
+  { name: "ADA-USD", displayName: "Cardano", ticker: "ADA", category: "crypto", type: "crypto", maxLeverage: 20 },
+  { name: "AVAX-USD", displayName: "Avalanche", ticker: "AVAX", category: "crypto", type: "crypto", maxLeverage: 20 },
+  { name: "LINK-USD", displayName: "Chainlink", ticker: "LINK", category: "crypto", type: "crypto", maxLeverage: 20 },
+  { name: "SUI-USD", displayName: "Sui", ticker: "SUI", category: "crypto", type: "crypto", maxLeverage: 20 },
+  { name: "ARB-USD", displayName: "Arbitrum", ticker: "ARB", category: "crypto", type: "crypto", maxLeverage: 20 },
+  { name: "OP-USD", displayName: "Optimism", ticker: "OP", category: "crypto", type: "crypto", maxLeverage: 20 },
+  { name: "NEAR-USD", displayName: "NEAR Protocol", ticker: "NEAR", category: "crypto", type: "crypto", maxLeverage: 20 },
+  { name: "UNI-USD", displayName: "Uniswap", ticker: "UNI", category: "crypto", type: "crypto", maxLeverage: 20 },
+  { name: "WIF-USD", displayName: "dogwifhat", ticker: "WIF", category: "crypto", type: "crypto", maxLeverage: 10 },
 ];
 
 type Tab = "crypto" | "favorites";
