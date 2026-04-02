@@ -20,7 +20,7 @@ export function Web3Provider({ children }: { children: ReactNode }) {
         appearance: {
           theme: "dark",
           accentColor: "#0052FF",
-          logo: "/logo.svg",
+          logo: "/logo.png",
           showWalletLoginFirst: false,
         },
         loginMethods: ["email", "google", "wallet"],

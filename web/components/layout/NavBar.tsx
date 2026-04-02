@@ -106,11 +106,8 @@ export function NavBar() {
         </button>
 
         {/* Logo */}
-        <Link href="/" className="flex items-center gap-2 md:mr-6 mr-2 hover:opacity-90 transition-opacity">
-          <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-sur-accent to-blue-400 flex items-center justify-center">
-            <span className="text-[12px] font-bold text-white">S</span>
-          </div>
-          <span className="font-bold text-sm tracking-wide hidden sm:block">SUR</span>
+        <Link href="/" className="flex items-center md:mr-6 mr-2 hover:opacity-90 transition-opacity">
+          <img src="/logo.png" alt="SUR" className="h-6" />
         </Link>
 
         {/* Primary nav (hidden on mobile) */}
