@@ -7,52 +7,49 @@
 /* ====== DARK THEME (default) ====== */
 :root,
 [data-theme="dark"] {
-  /* Legacy SUR variables */
-  --sur-bg: #1c1c20;
-  --sur-surface: #1c1c20;
-  --sur-border: #28282e;
-  --sur-text: #e4e5eb;
-  --sur-muted: #8b929e;
-  --sur-accent: #0052FF;
-  --sur-green: #3fb950;
-  --sur-red: #f85149;
-  --sur-yellow: #e3b341;
+  /* SUR Design System v2 — Binance/Hyperliquid inspired */
+  --sur-bg: #0B0E11;
+  --sur-surface: #12161C;
+  --sur-border: #1E2329;
+  --sur-text: #EAECEF;
+  --sur-muted: #848E9C;
+  --sur-accent: #1E80FF;
+  --sur-green: #0ECB81;
+  --sur-red: #F6465D;
+  --sur-yellow: #F0B90B;
 
-  /* shadcn-style HSL tokens (h s% l%) for opacity support */
-  --background: 240 7% 12%;
-  --foreground: 231 15% 91%;
-  --card: 240 7% 12%;
-  --card-foreground: 231 15% 91%;
-  --popover: 240 7% 10%;
-  --popover-foreground: 231 15% 91%;
-  --primary: 221 100% 50%;
+  /* shadcn-style HSL tokens */
+  --background: 216 24% 5%;       /* #0B0E11 */
+  --foreground: 220 16% 93%;      /* #EAECEF */
+  --card: 213 22% 9%;             /* #12161C */
+  --card-foreground: 220 16% 93%;
+  --popover: 215 19% 13%;         /* #1A1F27 */
+  --popover-foreground: 220 16% 93%;
+  --primary: 216 100% 56%;        /* #1E80FF */
   --primary-foreground: 0 0% 100%;
-  --secondary: 240 5% 16%;
-  --secondary-foreground: 231 12% 88%;
-  --muted: 240 5% 14%;
-  --muted-foreground: 220 9% 46%;
-  --accent: 221 85% 45%;
+  --secondary: 213 22% 9%;
+  --secondary-foreground: 220 16% 93%;
+  --muted: 215 19% 13%;           /* #1A1F27 */
+  --muted-foreground: 216 10% 57%; /* #848E9C */
+  --accent: 216 100% 56%;
   --accent-foreground: 0 0% 100%;
-  --destructive: 3 93% 63%;
+  --destructive: 354 91% 62%;     /* #F6465D */
   --destructive-foreground: 0 0% 100%;
-  --border: 240 7% 17%;
-  --input: 240 6% 13%;
-  --ring: 221 100% 50%;
+  --border: 213 14% 14%;          /* #1E2329 */
+  --input: 215 19% 13%;           /* #1A1F27 */
+  --ring: 216 100% 56%;
 
   /* Trading colors */
-  --long: 128 49% 49%;
-  --long-foreground: 128 40% 12%;
-  --short: 3 93% 63%;
-  --short-foreground: 3 40% 12%;
+  --long: 157 86% 43%;            /* #0ECB81 */
+  --long-foreground: 157 40% 12%;
+  --short: 354 91% 62%;           /* #F6465D */
+  --short-foreground: 354 40% 12%;
 
-  /* Glass & glow (full color values for custom CSS) */
-  --glass: rgba(28, 28, 32, 0.6);
-  --glass-border: rgba(40, 40, 46, 0.3);
-  --glow-primary: rgba(0, 82, 255, 0.3);
-  --glow-long: rgba(63, 185, 80, 0.2);
-  --glow-short: rgba(248, 81, 73, 0.2);
+  /* Glass disabled — clean borders only */
+  --glass: #12161C;
+  --glass-border: #1E2329;
 
-  --radius: 0.5rem;
+  --radius: 0.375rem;
   color-scheme: dark;
 }
 
@@ -93,11 +90,8 @@
   --short: 0 72% 50%;
   --short-foreground: 0 0% 100%;
 
-  --glass: rgba(255, 255, 255, 0.7);
-  --glass-border: rgba(226, 228, 233, 0.5);
-  --glow-primary: rgba(0, 82, 255, 0.15);
-  --glow-long: rgba(26, 127, 55, 0.15);
-  --glow-short: rgba(207, 34, 46, 0.15);
+  --glass: #ffffff;
+  --glass-border: #e2e4e9;
 
   color-scheme: light;
 }
@@ -128,12 +122,12 @@
 }
 :root:not([data-theme="light"]) ::-webkit-scrollbar-thumb,
 [data-theme="dark"] ::-webkit-scrollbar-thumb {
-  background: #363638;
+  background: #2B3139;
   border-radius: 2px;
 }
 :root:not([data-theme="light"]) ::-webkit-scrollbar-thumb:hover,
 [data-theme="dark"] ::-webkit-scrollbar-thumb:hover {
-  background: #48484c;
+  background: #3A4149;
 }
 
 /* Scrollbar — light */
@@ -175,45 +169,30 @@ input[type="number"]::-webkit-outer-spin-button {
 
 /* ====== VISUAL EFFECTS ====== */
 
+/* Glass panels — now solid with clean borders, no blur */
 .glass-panel {
   background: var(--glass);
-  backdrop-filter: blur(24px);
-  -webkit-backdrop-filter: blur(24px);
   border: 1px solid var(--glass-border);
 }
 
-.glow-primary {
-  box-shadow: 0 0 20px var(--glow-primary), 0 0 40px var(--glow-primary);
-}
-.glow-long {
-  box-shadow: 0 0 15px var(--glow-long);
-}
+/* Glow effects disabled — clean flat design */
+.glow-primary,
+.glow-long,
 .glow-short {
-  box-shadow: 0 0 15px var(--glow-short);
+  box-shadow: none;
 }
 
+/* Text gradient replaced with solid primary color */
 .text-gradient-primary {
-  background: linear-gradient(135deg, hsl(var(--primary)), hsl(221 85% 65%));
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
+  color: hsl(var(--primary));
 }
 
+/* Border glow replaced with subtle border */
 .border-glow {
-  position: relative;
+  border: 1px solid hsl(var(--border));
 }
 .border-glow::before {
-  content: '';
-  position: absolute;
-  inset: -1px;
-  border-radius: inherit;
-  padding: 1px;
-  background: linear-gradient(135deg, hsl(var(--primary)), transparent, hsl(var(--accent)));
-  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-  mask-composite: exclude;
-  -webkit-mask-composite: xor;
-  pointer-events: none;
+  display: none;
 }
 
 /* Legacy panel classes */
@@ -273,36 +252,32 @@ input[type="number"]::-webkit-outer-spin-button {
 /* ====== ORDER BOOK FLASH ANIMATIONS ====== */
 
 @keyframes flash-bid {
-  0% { background-color: rgba(63, 185, 80, 0.25); }
+  0% { background-color: rgba(14, 203, 129, 0.2); }
   100% { background-color: transparent; }
 }
 @keyframes flash-ask {
-  0% { background-color: rgba(248, 81, 73, 0.25); }
+  0% { background-color: rgba(246, 70, 93, 0.2); }
   100% { background-color: transparent; }
 }
 @keyframes flash-bid-increase {
-  0%, 15% {
-    background-color: rgba(63, 185, 80, 0.3);
-    box-shadow: inset 0 0 8px rgba(63, 185, 80, 0.2);
+  0%, 40% {
+    background-color: rgba(14, 203, 129, 0.25);
   }
   100% {
     background-color: transparent;
-    box-shadow: none;
   }
 }
 @keyframes flash-ask-increase {
-  0%, 15% {
-    background-color: rgba(248, 81, 73, 0.3);
-    box-shadow: inset 0 0 8px rgba(248, 81, 73, 0.2);
+  0%, 40% {
+    background-color: rgba(246, 70, 93, 0.25);
   }
   100% {
     background-color: transparent;
-    box-shadow: none;
   }
 }
 @keyframes flash-new-trade {
   0% { opacity: 1; }
-  10% { background-color: rgba(0, 82, 255, 0.15); }
+  10% { background-color: rgba(30, 128, 255, 0.15); }
   100% { background-color: transparent; }
 }
 @keyframes pulse-size {
@@ -316,9 +291,10 @@ input[type="number"]::-webkit-outer-spin-button {
   }
 }
 
-.animate-flash-bid { animation: flash-bid 400ms ease-out; }
-.animate-flash-ask { animation: flash-ask 400ms ease-out; }
+/* Flash classes kept for backward compat — new Orderbook uses direct DOM manipulation */
+.animate-flash-bid { animation: flash-bid 600ms ease-out; }
+.animate-flash-ask { animation: flash-ask 600ms ease-out; }
 .animate-flash-bid-increase { animation: flash-bid-increase 600ms ease-out; }
 .animate-flash-ask-increase { animation: flash-ask-increase 600ms ease-out; }
-.animate-flash-new-trade { animation: flash-new-trade 500ms ease-out; }
-.animate-pulse-size { animation: pulse-size 300ms ease-out; }
+.animate-flash-new-trade { animation: flash-new-trade 700ms ease-out; }
+.animate-pulse-size { animation: pulse-size 600ms ease-out; }

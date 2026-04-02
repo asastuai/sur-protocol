@@ -3,10 +3,46 @@
 import { useState, useRef, useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ConnectButton } from "@rainbow-me/rainbowkit";
+import { usePrivy } from "@privy-io/react-auth";
 import { LanguageSelector } from "./LanguageSelector";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
 import { useTradingZustand } from "@/lib/trading-zustand";
+
+function PrivyConnectButton() {
+  const { login, logout, authenticated, user, ready } = usePrivy();
+
+  if (!ready) return <div className="w-24 h-8 rounded-lg bg-white/[0.04] animate-pulse" />;
+
+  if (!authenticated) {
+    return (
+      <button
+        onClick={login}
+        className="px-4 py-1.5 rounded-lg bg-sur-accent text-white text-xs font-semibold hover:bg-sur-accent/90 transition-colors"
+      >
+        Sign In
+      </button>
+    );
+  }
+
+  const displayName = user?.email?.address
+    || user?.google?.email
+    || user?.wallet?.address?.slice(0, 6) + "..." + user?.wallet?.address?.slice(-4)
+    || "Connected";
+
+  return (
+    <div className="flex items-center gap-2">
+      <span className="px-3 py-1.5 rounded-lg bg-white/[0.04] text-xs font-mono text-sur-text">
+        {displayName}
+      </span>
+      <button
+        onClick={logout}
+        className="px-2.5 py-1.5 rounded-lg text-[11px] text-sur-muted hover:text-sur-text hover:bg-white/[0.04] transition-colors"
+      >
+        Sign Out
+      </button>
+    </div>
+  );
+}
 
 const NAV_ITEMS = [
   { label: "Trade", href: "/" },
@@ -193,63 +229,7 @@ export function NavBar() {
         </button>
         <ThemeToggle />
         <LanguageSelector />
-        <ConnectButton.Custom>
-          {({ account, chain, openAccountModal, openChainModal, openConnectModal, mounted }) => {
-            const ready = mounted;
-            const connected = ready && account && chain;
-
-            return (
-              <div
-                {...(!ready && {
-                  "aria-hidden": true,
-                  style: { opacity: 0, pointerEvents: "none" as const, userSelect: "none" as const },
-                })}
-              >
-                {(() => {
-                  if (!connected) {
-                    return (
-                      <button
-                        onClick={openConnectModal}
-                        className="px-4 py-1.5 rounded-lg bg-sur-accent text-white text-xs font-semibold hover:bg-sur-accent/90 transition-colors"
-                      >
-                        Connect Wallet
-                      </button>
-                    );
-                  }
-
-                  if (chain.unsupported) {
-                    return (
-                      <button
-                        onClick={openChainModal}
-                        className="px-3 py-1.5 rounded-lg bg-sur-red/20 text-sur-red text-xs font-semibold hover:bg-sur-red/30 transition-colors"
-                      >
-                        Wrong Network
-                      </button>
-                    );
-                  }
-
-                  return (
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={openChainModal}
-                        className="px-2.5 py-1.5 rounded-lg text-[11px] bg-white/[0.04] text-sur-muted hover:bg-white/[0.08] transition-colors"
-                      >
-                        {chain.name}
-                      </button>
-                      <button
-                        onClick={openAccountModal}
-                        className="px-3 py-1.5 rounded-lg bg-white/[0.04] text-xs font-mono hover:bg-white/[0.08] transition-colors"
-                      >
-                        {account.displayName}
-                        {account.displayBalance ? ` (${account.displayBalance})` : ""}
-                      </button>
-                    </div>
-                  );
-                })()}
-              </div>
-            );
-          }}
-        </ConnectButton.Custom>
+        <PrivyConnectButton />
       </div>
     </nav>
   );

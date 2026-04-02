@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useTrading } from "@/providers/TradingProvider";
 import { useAccount, useWalletClient } from "wagmi";
-import { useConnectModal } from "@rainbow-me/rainbowkit";
+import { usePrivy } from "@privy-io/react-auth";
 import { toPrice, toSize, fmtPrice, CONTRACTS, CHAIN, EIP712_DOMAIN, ORDER_TYPES, getMaxLeverageForSize, calculateTieredMargin, MARKET_RISK_CONFIGS } from "@/lib/constants";
 import { type Hex } from "viem";
 
@@ -14,7 +14,7 @@ export function OrderPanel() {
   const { state, dispatch, send, market } = useTrading();
   const { address, isConnected } = useAccount();
   const { data: walletClient } = useWalletClient();
-  const { openConnectModal } = useConnectModal();
+  const { login: openConnectModal } = usePrivy();
 
   const [side, setSide] = useState<"buy" | "sell">("buy");
   const [orderType, setOrderType] = useState<OrderType>("limit");

@@ -71,9 +71,9 @@ module.exports = {
         sm: "calc(var(--radius) - 4px)",
       },
       boxShadow: {
-        "glow-primary": "0 0 20px rgba(0, 82, 255, 0.3), 0 0 40px rgba(0, 82, 255, 0.15)",
-        "glow-long": "0 0 15px rgba(63, 185, 80, 0.25)",
-        "glow-short": "0 0 15px rgba(248, 81, 73, 0.25)",
+        "glow-primary": "none",
+        "glow-long": "none",
+        "glow-short": "none",
       },
       fontFamily: {
         mono: ["JetBrains Mono", "SF Mono", "Fira Code", "monospace"],

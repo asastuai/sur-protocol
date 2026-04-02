@@ -1,7 +1,6 @@
 'use client';
 
 import { useState, useMemo, useCallback, useEffect } from 'react';
-import dynamic from 'next/dynamic';
 import { useTrading } from '@/providers/TradingProvider';
 import { useTradingZustand, computePaperPnl } from '@/lib/trading-zustand';
 import { MARKETS, type MarketMeta } from '@/lib/constants';
@@ -14,16 +13,11 @@ import {
   MarketSelectorPanel,
 } from '@/components/trading-v2';
 
-// Heavy components — lazy loaded for faster initial render
-const Chart = dynamic(() => import('@/components/trading/Chart').then(m => m.Chart), {
-  ssr: false,
-  loading: () => <div className="flex items-center justify-center h-full bg-sur-bg text-sur-muted text-xs">Loading chart...</div>,
-});
+// Real TradingView chart
+import { Chart } from '@/components/trading/Chart';
 
-const OrderPanel = dynamic(() => import('@/components/trading/OrderPanel').then(m => m.OrderPanel), {
-  ssr: false,
-  loading: () => <div className="flex items-center justify-center h-full bg-sur-bg text-sur-muted text-xs">Loading...</div>,
-});
+// Real order panel (paper trading engine)
+import { OrderPanel } from '@/components/trading/OrderPanel';
 
 // Types
 import type { Market, OrderBook, Trade, Position, Order } from '@/lib/front-types';
@@ -288,39 +282,56 @@ export default function TradingPage() {
 
       {/* Main Content */}
       <div className="flex flex-1 overflow-hidden">
-        {/* Market Selector Sidebar */}
-        {showSidebar && (
-          <div className="w-64 flex-shrink-0">
-            <MarketSelectorPanel
-              markets={markets}
-              selectedMarket={selectedMarket}
-              onSelectMarket={onSelectMarket}
-            />
-          </div>
+        {/* Market Selector Sidebar — collapsible */}
+        <div className={`flex-shrink-0 border-r border-border transition-all duration-200 overflow-hidden ${showSidebar ? 'w-64' : 'w-0'}`}>
+          {showSidebar && (
+            <div className="h-full flex flex-col w-64">
+              <div className="flex items-center justify-between px-3 py-2 border-b border-border">
+                <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Markets</span>
+                <button
+                  onClick={() => setShowSidebar(false)}
+                  className="p-1 rounded hover:bg-white/[0.06] text-muted-foreground hover:text-foreground transition-colors"
+                  aria-label="Collapse markets"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                    <path d="M15 19l-7-7 7-7" />
+                  </svg>
+                </button>
+              </div>
+              <div className="flex-1 overflow-y-auto">
+                <MarketSelectorPanel
+                  markets={markets}
+                  selectedMarket={selectedMarket}
+                  onSelectMarket={onSelectMarket}
+                />
+              </div>
+            </div>
+          )}
+        </div>
+        {!showSidebar && (
+          <button
+            onClick={() => setShowSidebar(true)}
+            className="flex-shrink-0 flex items-center gap-1.5 px-2 py-2 border-r border-border text-muted-foreground hover:text-foreground hover:bg-white/[0.03] transition-colors self-start"
+            aria-label="Expand markets"
+          >
+            <span className="text-[10px] font-semibold uppercase tracking-wider">Markets</span>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <path d="M9 5l7 7-7 7" />
+            </svg>
+          </button>
         )}
-
-        {/* Toggle Sidebar Button */}
-        <button
-          onClick={() => setShowSidebar(!showSidebar)}
-          className="absolute left-0 top-1/2 z-10 -translate-y-1/2 rounded-r-md border border-l-0 border-border bg-card p-2 text-muted-foreground transition-colors hover:text-foreground"
-          style={{ left: showSidebar ? '256px' : '0' }}
-        >
-          <svg className={`h-4 w-4 transition-transform ${showSidebar ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-          </svg>
-        </button>
 
         {/* Trading Area */}
         <div className="flex flex-1 flex-col overflow-hidden">
           {/* Top: Chart + OrderBook + OrderPanel */}
           <div className="flex flex-1 overflow-hidden border-b border-border">
             {/* Real TradingView Chart */}
-            <div className="flex-1 border-r border-border bg-card overflow-hidden">
+            <div className="flex-[3] min-w-[280px] border-r border-border bg-card overflow-hidden">
               <Chart market={state.selectedMarket} />
             </div>
 
-            {/* Order Book with real data */}
-            <div className="w-72 flex-shrink-0 border-r border-border bg-card">
+            {/* Order Book with real data — larger for visual impact */}
+            <div className="flex-[2] min-w-[320px] max-w-[420px] border-r border-border bg-card">
               <OrderBookPanel
                 orderBook={orderBook}
                 recentTrades={recentTrades}
@@ -330,7 +341,7 @@ export default function TradingPage() {
             </div>
 
             {/* Real Order Panel (paper trading engine) */}
-            <div className="w-80 flex-shrink-0 bg-card overflow-y-auto scrollbar-thin">
+            <div className="w-[360px] flex-shrink-0 bg-card overflow-y-auto scrollbar-thin">
               <OrderPanel />
             </div>
           </div>

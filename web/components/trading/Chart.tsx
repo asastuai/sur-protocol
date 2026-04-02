@@ -1053,7 +1053,7 @@ export function Chart({ market }: ChartProps) {
       {/* ===== MAIN AREA: LEFT TOOLBAR + CHART ===== */}
       <div className="flex-1 flex min-h-0">
         {/* Left drawing toolbar */}
-        <div className="w-9 border-r border-[#28282e] flex flex-col items-center py-1.5 gap-0.5 flex-shrink-0 overflow-y-auto">
+        <div className="w-14 border-r border-[#28282e] flex flex-col items-center py-2 gap-1.5 flex-shrink-0 overflow-y-auto">
           {DRAW_TOOLS.map((tool) => {
             const isActive = activeTool === tool.key
               || (tool.key === "magnet" && magnetMode)
@@ -1063,10 +1063,10 @@ export function Chart({ market }: ChartProps) {
                 key={tool.key}
                 onClick={() => handleToolClick(tool.key)}
                 title={tool.label}
-                className={`w-7 h-7 flex items-center justify-center rounded transition-colors ${
+                className={`w-10 h-10 flex items-center justify-center rounded-md transition-colors ${
                   isActive
-                    ? "text-sur-accent bg-sur-accent/10"
-                    : "text-sur-muted hover:text-sur-text hover:bg-[#28282e]"
+                    ? "text-sur-accent bg-sur-accent/15"
+                    : "text-sur-muted hover:text-sur-text hover:bg-white/[0.06]"
                 }`}
               >
                 {tool.icon}
@@ -1435,7 +1435,7 @@ function calcVWAP(candles: any[]): TV[] {
 
 function CrosshairIcon() {
   return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.2">
+    <svg width="20" height="20" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.2">
       <circle cx="7" cy="7" r="4.5" /><line x1="7" y1="0.5" x2="7" y2="3" /><line x1="7" y1="11" x2="7" y2="13.5" />
       <line x1="0.5" y1="7" x2="3" y2="7" /><line x1="11" y1="7" x2="13.5" y2="7" />
     </svg>
@@ -1444,7 +1444,7 @@ function CrosshairIcon() {
 
 function TrendLineIcon() {
   return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.2">
+    <svg width="20" height="20" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.2">
       <line x1="2" y1="11" x2="12" y2="3" /><circle cx="2" cy="11" r="1" fill="currentColor" /><circle cx="12" cy="3" r="1" fill="currentColor" />
     </svg>
   );
@@ -1452,7 +1452,7 @@ function TrendLineIcon() {
 
 function HorzLineIcon() {
   return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.2">
+    <svg width="20" height="20" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.2">
       <line x1="1" y1="7" x2="13" y2="7" strokeDasharray="2 1.5" />
     </svg>
   );
@@ -1460,7 +1460,7 @@ function HorzLineIcon() {
 
 function RayIcon() {
   return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.2">
+    <svg width="20" height="20" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.2">
       <line x1="2" y1="10" x2="13" y2="4" /><circle cx="2" cy="10" r="1" fill="currentColor" />
     </svg>
   );
@@ -1468,7 +1468,7 @@ function RayIcon() {
 
 function FibIcon() {
   return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1" strokeOpacity="0.7">
+    <svg width="20" height="20" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1" strokeOpacity="0.7">
       <line x1="1" y1="2" x2="13" y2="2" /><line x1="1" y1="5" x2="13" y2="5" /><line x1="1" y1="7" x2="13" y2="7" />
       <line x1="1" y1="9.5" x2="13" y2="9.5" /><line x1="1" y1="12" x2="13" y2="12" />
     </svg>
@@ -1477,7 +1477,7 @@ function FibIcon() {
 
 function TextIcon() {
   return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.2">
+    <svg width="20" height="20" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.2">
       <path d="M3 3h8M7 3v9" strokeLinecap="round" />
     </svg>
   );
@@ -1485,7 +1485,7 @@ function TextIcon() {
 
 function MeasureIcon() {
   return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.2">
+    <svg width="20" height="20" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.2">
       <rect x="1.5" y="5" width="11" height="4" rx="0.5" /><line x1="4" y1="6" x2="4" y2="8" />
       <line x1="7" y1="5.5" x2="7" y2="8.5" /><line x1="10" y1="6" x2="10" y2="8" />
     </svg>
@@ -1494,7 +1494,7 @@ function MeasureIcon() {
 
 function BrushIcon() {
   return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.2">
+    <svg width="20" height="20" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.2">
       <path d="M9.5 2L12 4.5 5.5 11H3v-2.5L9.5 2z" /><line x1="8" y1="3.5" x2="10.5" y2="6" />
     </svg>
   );
@@ -1502,7 +1502,7 @@ function BrushIcon() {
 
 function MagnetIcon() {
   return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.2">
+    <svg width="20" height="20" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.2">
       <path d="M4 2v4a3 3 0 006 0V2" /><line x1="4" y1="2" x2="4" y2="4" strokeWidth="2.5" />
       <line x1="10" y1="2" x2="10" y2="4" strokeWidth="2.5" />
     </svg>
@@ -1511,7 +1511,7 @@ function MagnetIcon() {
 
 function ZoomIcon() {
   return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.2">
+    <svg width="20" height="20" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.2">
       <circle cx="6" cy="6" r="4" /><line x1="9" y1="9" x2="12.5" y2="12.5" />
       <line x1="4" y1="6" x2="8" y2="6" /><line x1="6" y1="4" x2="6" y2="8" />
     </svg>
@@ -1520,7 +1520,7 @@ function ZoomIcon() {
 
 function LockIcon() {
   return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.2">
+    <svg width="20" height="20" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.2">
       <rect x="3" y="6.5" width="8" height="5.5" rx="1" /><path d="M5 6.5V4.5a2 2 0 014 0v2" />
     </svg>
   );
@@ -1528,7 +1528,7 @@ function LockIcon() {
 
 function TrashIcon() {
   return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.2">
+    <svg width="20" height="20" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.2">
       <path d="M2.5 4h9M5 4V2.5h4V4M3.5 4l.5 8h6l.5-8" /><line x1="6" y1="6" x2="6" y2="10" />
       <line x1="8" y1="6" x2="8" y2="10" />
     </svg>
@@ -1537,7 +1537,7 @@ function TrashIcon() {
 
 function CandleIcon() {
   return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1">
+    <svg width="20" height="20" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1">
       <line x1="4" y1="1" x2="4" y2="13" /><rect x="2.5" y="4" width="3" height="5" fill="currentColor" rx="0.3" />
       <line x1="10" y1="2" x2="10" y2="12" /><rect x="8.5" y="5" width="3" height="4" rx="0.3" />
     </svg>
@@ -1546,7 +1546,7 @@ function CandleIcon() {
 
 function LineIcon() {
   return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.3">
+    <svg width="20" height="20" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.3">
       <polyline points="1,10 4,6 7,8 10,3 13,5" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
@@ -1554,7 +1554,7 @@ function LineIcon() {
 
 function AreaIcon() {
   return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+    <svg width="20" height="20" viewBox="0 0 14 14" fill="none">
       <path d="M1 10 L4 6 L7 8 L10 3 L13 5 L13 12 L1 12Z" fill="currentColor" fillOpacity="0.15" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
     </svg>
   );
@@ -1562,7 +1562,7 @@ function AreaIcon() {
 
 function IndicatorIcon() {
   return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.2">
+    <svg width="20" height="20" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.2">
       <polyline points="1,9 3,5 5,7 8,2 10,6 13,4" strokeLinecap="round" strokeLinejoin="round" />
       <polyline points="1,11 4,9 7,10 10,8 13,9" strokeLinecap="round" strokeLinejoin="round" opacity="0.4" />
     </svg>
@@ -1571,7 +1571,7 @@ function IndicatorIcon() {
 
 function SettingsIcon() {
   return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.2">
+    <svg width="20" height="20" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.2">
       <circle cx="7" cy="7" r="2" /><path d="M7 1v1.5M7 11.5V13M1 7h1.5M11.5 7H13M2.8 2.8l1 1M10.2 10.2l1 1M11.2 2.8l-1 1M3.8 10.2l-1 1" />
     </svg>
   );
@@ -1579,7 +1579,7 @@ function SettingsIcon() {
 
 function FullscreenIcon() {
   return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.3">
+    <svg width="20" height="20" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.3">
       <polyline points="1,5 1,1 5,1" /><polyline points="9,1 13,1 13,5" />
       <polyline points="13,9 13,13 9,13" /><polyline points="5,13 1,13 1,9" />
     </svg>

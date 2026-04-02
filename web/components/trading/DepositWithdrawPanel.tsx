@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useAccount } from "wagmi";
-import { useConnectModal } from "@rainbow-me/rainbowkit";
+import { usePrivy } from "@privy-io/react-auth";
 import { useVault } from "@/hooks/useVault";
 import { useTrading } from "@/providers/TradingProvider";
 
@@ -10,7 +10,7 @@ type Tab = "deposit" | "withdraw";
 
 export function DepositWithdrawPanel() {
   const { isConnected } = useAccount();
-  const { openConnectModal } = useConnectModal();
+  const { login: openConnectModal } = usePrivy();
   const vault = useVault();
   const { state, dispatch } = useTrading();
 
