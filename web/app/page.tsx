@@ -18,6 +18,7 @@ import { Chart } from '@/components/trading/Chart';
 
 // Real order panel (paper trading engine)
 import { OrderPanel } from '@/components/trading/OrderPanel';
+import { TickerBar } from '@/components/layout/TickerBar';
 
 // Types
 import type { Market, OrderBook, Trade, Position, Order } from '@/lib/front-types';
@@ -394,6 +395,7 @@ export default function TradingPage() {
           </div>
         </div>
       </div>
+      <TickerBar />
     </div>
     </ErrorBoundary>
   );
