@@ -413,9 +413,11 @@ contract CrossContractAttacks is Test {
     //  Governance attack: change haircut, liquidate, re-deposit cheap
     // ================================================================
     function test_xc_haircutGovernanceAttack() public {
-        emit log_string("=== XC-7: Haircut Governance -> Liquidation -> Re-deposit ===");
+        emit log_string("=== XC-7: Haircut Governance Attack (post Mapping 3) ===");
 
-        // Alice deposits cbETH at 95% haircut
+        // Alice deposits cbETH at 95% haircut. The current haircut and
+        // liquidation threshold are snapshotted into her TraderCollateral
+        // for prospective-only semantics.
         cbETH.mint(alice, 100 ether);
         vm.startPrank(alice);
         cbETH.approve(address(cm), 100 ether);
@@ -424,46 +426,44 @@ contract CrossContractAttacks is Test {
 
         emit log_named_uint("  Alice credited at 95%", credited);
 
-        // Owner slashes haircut to 50% (governance attack or emergency)
+        // Owner attempts to slash haircut to 50% (historical governance-attack vector).
         vm.prank(owner);
         cm.setHaircut(address(cbETH), 5000);
 
-        // Alice is now liquidatable
+        // Pre Mapping 3: Alice would be instantly liquidatable.
+        // Post Mapping 3: Alice's snapshot locks her at 95% haircut / 90%
+        // threshold. She is NOT liquidatable — the retroactive-bump attack
+        // vector is closed.
         bool isLiq = cm.isLiquidatable(alice, address(cbETH));
-        assertTrue(isLiq, "Alice should be liquidatable after haircut slash");
+        assertFalse(isLiq,
+            "Mapping 3: haircut slash MUST NOT retroactively liquidate Alice's position");
 
-        // Keeper liquidates
+        // Keeper attempting to liquidate Alice will revert.
         vm.prank(keeper);
+        vm.expectRevert();
         cm.liquidateCollateral(alice, address(cbETH));
 
-        // Verify alice's position is cleared
-        (uint256 amt, uint256 credit,) = cm.getTraderCollateral(address(cbETH), alice);
-        assertEq(amt, 0);
-        assertEq(credit, 0);
+        // Alice's position remains intact with unchanged state.
+        (uint256 amtAfter, uint256 creditAfter,) =
+            cm.getTraderCollateral(address(cbETH), alice);
+        assertEq(amtAfter, 100 ether, "Alice's collateral amount preserved");
+        assertEq(creditAfter, credited, "Alice's credited USDC preserved");
 
-        // Eve (the attacker) now deposits cbETH at the low 50% haircut
-        // and gets cheap collateral
+        // Eve — entering the protocol AFTER the bump — correctly gets
+        // credited at the new 50% haircut. Prospective semantics apply to
+        // her fresh position: she accepts the current terms by depositing.
         cbETH.mint(eve, 100 ether);
         vm.startPrank(eve);
         cbETH.approve(address(cm), 100 ether);
         uint256 eveCredit = cm.depositCollateral(address(cbETH), 100 ether);
         vm.stopPrank();
 
-        // Eve gets less credit per cbETH than alice did
-        emit log_named_uint("  Eve credited at 50%", eveCredit);
-        assertTrue(eveCredit < credited, "50% haircut gives less credit");
+        emit log_named_uint("  Eve credited at 50% (entered after bump)", eveCredit);
+        assertTrue(eveCredit < credited,
+            "Eve enters under the new haircut regime and is credited accordingly");
 
-        // Owner restores haircut to 95%
-        vm.prank(owner);
-        cm.setHaircut(address(cbETH), 9500);
-
-        // Eve's position is now OVER-collateralized
-        // currentValue at 95% > creditedUsdc at 50%
-        // This is fine - eve just benefits from a haircut increase
-        // But alice lost her position unfairly from the governance action
-
-        emit log_string("  [INFO] Haircut governance attack can unfairly liquidate users");
-        emit log_string("  [RECOMMENDATION] Haircut changes should go through timelock");
+        emit log_string("  [OK] Mapping 3 prospective-only closes the historical haircut-slash vector");
+        emit log_string("  [OK] Pre-bump depositors protected; post-bump depositors accept current terms");
     }
 
     // ================================================================

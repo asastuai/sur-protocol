@@ -53,6 +53,24 @@ contract CollateralManager {
     event CollateralPriceUpdated(address indexed token, uint256 price, uint256 timestamp);
     event CollateralHaircutUpdated(address indexed token, uint256 oldHaircut, uint256 newHaircut);
 
+    /// @notice Emitted whenever a position-economics parameter changes prospectively.
+    /// @dev See docs/MAPPING_3_prospective_params.md. Existing deposits settle
+    ///      at their snapshotted haircut and liquidation threshold, NOT current.
+    /// @param paramId        keccak256 of the canonical parameter name (per-token
+    ///                       for haircuts).
+    /// @param oldValue       Previous value ABI-encoded.
+    /// @param newValue       New value ABI-encoded.
+    /// @param effectiveBlock Block at which the new value begins applying to
+    ///                       newly-entered positions.
+    /// @param admin          Address that triggered the update.
+    event ParameterBump(
+        bytes32 indexed paramId,
+        bytes oldValue,
+        bytes newValue,
+        uint256 effectiveBlock,
+        address indexed admin
+    );
+
     // ============================================================
     //                    STRUCTS
     // ============================================================
@@ -73,6 +91,17 @@ contract CollateralManager {
     struct TraderCollateral {
         uint256 amount;         // tokens deposited
         uint256 creditedUsdc;   // USDC-equivalent credited to vault
+        /// @notice Haircut bps snapshotted when this deposit transitioned from
+        ///         empty to non-empty. Used by liquidation math so that
+        ///         admin haircut bumps do not retroactively reduce the
+        ///         currentValue computation on an already-held position.
+        ///         Reset to current haircut when the position is fully closed
+        ///         (amount returns to zero) and reopened. See Mapping 3 in
+        ///         docs/MAPPING_3_prospective_params.md.
+        uint256 haircutAtDeposit;
+        /// @notice Liquidation-threshold bps snapshotted at the same moment.
+        ///         Same prospective-only semantics as haircutAtDeposit.
+        uint256 liquidationThresholdAtDeposit;
     }
 
     // ============================================================
@@ -161,6 +190,11 @@ contract CollateralManager {
         emit CollateralAdded(token, symbol, haircutBps, decimals);
     }
 
+    /// @notice Update the haircut for a collateral token. Prospective-only
+    ///         (Mapping 3): trader positions that existed before the bump
+    ///         continue to be valued using their snapshotted haircut for
+    ///         liquidation math. Only new deposits (fresh positions after
+    ///         full withdrawal, or first-time deposits) use the new haircut.
     function setHaircut(address token, uint256 newHaircut) external onlyOwner {
         CollateralConfig storage c = collaterals[token];
         if (c.token == address(0)) revert CollateralNotSupported(token);
@@ -168,6 +202,13 @@ contract CollateralManager {
         uint256 old = c.haircutBps;
         c.haircutBps = newHaircut;
         emit CollateralHaircutUpdated(token, old, newHaircut);
+        emit ParameterBump(
+            keccak256(abi.encodePacked("CollateralManager.haircut:", token)),
+            abi.encode(old),
+            abi.encode(newHaircut),
+            block.number,
+            msg.sender
+        );
     }
 
     event CollateralPauseChanged(address indexed token, bool active);
@@ -247,11 +288,22 @@ contract CollateralManager {
 
     event MaxPriceDeviationUpdated(uint256 oldBps, uint256 newBps);
 
+    /// @notice Update the per-update max price deviation bps.
+    /// @dev Prospective-by-construction: only consumed by the oracle keeper
+    ///      at updatePrice time, never re-read against existing trader
+    ///      positions. Emits ParameterBump for schema consistency.
     function setMaxPriceDeviationBps(uint256 newBps) external onlyOwner {
         require(newBps >= 100 && newBps <= 5000, "Invalid deviation");
         uint256 old = maxPriceDeviationBps;
         maxPriceDeviationBps = newBps;
         emit MaxPriceDeviationUpdated(old, newBps);
+        emit ParameterBump(
+            keccak256("CollateralManager.maxPriceDeviationBps"),
+            abi.encode(old),
+            abi.encode(newBps),
+            block.number,
+            msg.sender
+        );
     }
 
     function _requireFreshPrice(CollateralConfig storage c) internal view {
@@ -290,6 +342,14 @@ contract CollateralManager {
 
         // H-12 fix: CEI pattern — update state BEFORE external calls
         TraderCollateral storage tc = deposits[token][msg.sender];
+        // Mapping 3: snapshot on transition from empty to non-empty (fresh
+        // position entry). Top-ups to an already-open position inherit the
+        // existing snapshot. Full withdrawal + redeposit creates a new
+        // snapshot with then-current values.
+        if (tc.amount == 0) {
+            tc.haircutAtDeposit = c.haircutBps;
+            tc.liquidationThresholdAtDeposit = liquidationThresholdBps;
+        }
         tc.amount += amount;
         tc.creditedUsdc += creditedUsdc;
         c.totalDeposited += amount;
@@ -370,11 +430,17 @@ contract CollateralManager {
         TraderCollateral storage tc = deposits[token][trader];
         if (tc.amount == 0) revert InsufficientCollateral(0, 0);
 
-        // Calculate current value with haircut
-        uint256 currentValue = (tc.amount * c.price * c.haircutBps) / (10 ** c.decimals * BPS);
+        // Mapping 3 prospective-only: use the haircut and threshold snapshotted
+        // at the trader's position entry. Admin bumps to haircutBps or
+        // liquidationThresholdBps since the deposit DO NOT retroactively alter
+        // this trader's liquidation math.
+        uint256 snapHaircut = tc.haircutAtDeposit;
+        uint256 snapThreshold = tc.liquidationThresholdAtDeposit;
+
+        uint256 currentValue = (tc.amount * c.price * snapHaircut) / (10 ** c.decimals * BPS);
 
         // Check if undercollateralized: currentValue < creditedUsdc * liquidationThreshold
-        if (currentValue * BPS >= tc.creditedUsdc * liquidationThresholdBps) {
+        if (currentValue * BPS >= tc.creditedUsdc * snapThreshold) {
             revert NotUndercollateralized(trader, token);
         }
 
@@ -395,23 +461,44 @@ contract CollateralManager {
         emit CollateralLiquidated(trader, token, tokenAmount, usdcDebit, msg.sender);
     }
 
-    /// @notice Check if a trader's collateral position is liquidatable
+    /// @notice Check if a trader's collateral position is liquidatable.
+    /// @dev Mapping 3: uses the haircut and threshold snapshotted at the
+    ///      trader's position entry, not the current contract state. Admin
+    ///      parameter bumps do not retroactively alter the liquidation
+    ///      check for this trader.
     function isLiquidatable(address trader, address token) external view returns (bool) {
         CollateralConfig storage c = collaterals[token];
         TraderCollateral storage tc = deposits[token][trader];
         if (tc.amount == 0) return false;
 
-        uint256 currentValue = (tc.amount * c.price * c.haircutBps) / (10 ** c.decimals * BPS);
-        return currentValue * BPS < tc.creditedUsdc * liquidationThresholdBps;
+        uint256 snapHaircut = tc.haircutAtDeposit;
+        uint256 snapThreshold = tc.liquidationThresholdAtDeposit;
+        uint256 currentValue = (tc.amount * c.price * snapHaircut) / (10 ** c.decimals * BPS);
+        return currentValue * BPS < tc.creditedUsdc * snapThreshold;
     }
 
     event LiquidationThresholdUpdated(uint256 oldThreshold, uint256 newThreshold);
 
+    /// @notice Update the global liquidation threshold. Prospective-only
+    ///         (Mapping 3, CRITICAL): existing trader positions use their
+    ///         snapshotted threshold for liquidation math. Only fresh
+    ///         positions opened after the bump use the new threshold.
+    ///         This is the single most economically important
+    ///         prospective-only protection in the protocol — a retroactive
+    ///         bump could liquidate positions whose collateral value has
+    ///         not changed at all.
     function setLiquidationThresholdBps(uint256 newThreshold) external onlyOwner {
         require(newThreshold >= 5000 && newThreshold <= BPS, "Invalid threshold");
         uint256 old = liquidationThresholdBps;
         liquidationThresholdBps = newThreshold;
         emit LiquidationThresholdUpdated(old, newThreshold);
+        emit ParameterBump(
+            keccak256("CollateralManager.liquidationThresholdBps"),
+            abi.encode(old),
+            abi.encode(newThreshold),
+            block.number,
+            msg.sender
+        );
     }
 
     // ============================================================

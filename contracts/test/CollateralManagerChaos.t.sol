@@ -293,9 +293,10 @@ contract CollateralManagerChaosTest is Test {
     //  TEST 11: Haircut change impact on existing positions
     // ================================================================
     function test_cm_haircutChangeImpact() public {
-        emit log_string("=== CM: Haircut change impact on liquidation ===");
+        emit log_string("=== CM: Haircut change impact on liquidation (post Mapping 3) ===");
 
-        // Alice deposits at 95% haircut
+        // Alice deposits at 95% haircut. The current haircut is snapshotted
+        // into her TraderCollateral.haircutAtDeposit.
         cbETH.mint(alice, 10 ether);
         vm.startPrank(alice);
         cbETH.approve(address(cm), 10 ether);
@@ -305,18 +306,21 @@ contract CollateralManagerChaosTest is Test {
         (,uint256 creditedUsdc,) = cm.getTraderCollateral(address(cbETH), alice);
         emit log_named_uint("  Credited at 95% haircut", creditedUsdc);
 
-        // Owner lowers haircut to 50% (more aggressive)
+        // Owner lowers haircut to 50% (historical governance-attack vector).
         vm.prank(owner);
         cm.setHaircut(address(cbETH), 5000);
 
-        // Now currentValue = 10 * 3500 * 0.50 = $17,500
-        // creditedUsdc = $33,250 (unchanged - stored at deposit time)
-        // ratio = 17500/33250 = 52.6% < 90% threshold => liquidatable!
+        // Pre Mapping 3: the haircut bump would retroactively reduce the
+        // computed currentValue, making Alice's position suddenly liquidatable
+        // without her collateral having moved. Post Mapping 3: isLiquidatable
+        // uses Alice's snapshotted haircut (95%), not the current 50%. The
+        // position is protected by prospective-only semantics.
         bool liq = cm.isLiquidatable(alice, address(cbETH));
-        assertTrue(liq, "Haircut change should make position liquidatable");
+        assertFalse(liq,
+            "Mapping 3: haircut bump MUST NOT retroactively make existing position liquidatable");
 
-        emit log_string("  [INFO] Haircut reduction makes existing positions liquidatable");
-        emit log_string("  [INFO] This is a governance risk - sudden haircut changes can mass-liquidate");
+        emit log_string("  [OK] Prospective-only snapshot protects Alice from a governance haircut slash");
+        emit log_string("  [OK] Mapping 3 closes this retroactive-bump attack vector");
     }
 
     // ================================================================

@@ -450,4 +450,117 @@ contract CollateralManagerTest is Test {
         assertEq(credited, 33_250 * USDC_UNIT); // at old price: 10 * 3500 * 0.95
         assertEq(currentVal, 36_100 * USDC_UNIT); // at new price: 10 * 3800 * 0.95
     }
+
+    // ============================================================
+    //        MAPPING 3 — Prospective-only haircut / threshold
+    // Acceptance tests from docs/MAPPING_3_prospective_params.md
+    // ============================================================
+
+    function test_mapping3_setLiquidationThresholdBps_emitsParameterBump() public {
+        vm.expectEmit(true, false, false, true);
+        emit CollateralManager.ParameterBump(
+            keccak256("CollateralManager.liquidationThresholdBps"),
+            abi.encode(uint256(9000)),
+            abi.encode(uint256(9500)),
+            block.number,
+            owner
+        );
+        vm.prank(owner);
+        cm.setLiquidationThresholdBps(9500);
+    }
+
+    function test_mapping3_setHaircut_emitsParameterBump() public {
+        vm.expectEmit(true, false, false, true);
+        emit CollateralManager.ParameterBump(
+            keccak256(abi.encodePacked("CollateralManager.haircut:", address(cbETH))),
+            abi.encode(uint256(9500)),
+            abi.encode(uint256(8500)),
+            block.number,
+            owner
+        );
+        vm.prank(owner);
+        cm.setHaircut(address(cbETH), 8500);
+    }
+
+    function test_mapping3_setMaxPriceDeviationBps_emitsParameterBump() public {
+        vm.expectEmit(true, false, false, true);
+        emit CollateralManager.ParameterBump(
+            keccak256("CollateralManager.maxPriceDeviationBps"),
+            abi.encode(uint256(1000)),
+            abi.encode(uint256(500)),
+            block.number,
+            owner
+        );
+        vm.prank(owner);
+        cm.setMaxPriceDeviationBps(500);
+    }
+
+    /// @notice Prospective-only verification for setLiquidationThresholdBps.
+    ///         An admin bump of the threshold must NOT retroactively make an
+    ///         existing position liquidatable.
+    function test_mapping3_liquidationThreshold_bumpIsProspective() public {
+        // Alice deposits at threshold = 9000 (9000 bps = 90%).
+        cbETH.mint(alice, 10 * ETH_UNIT);
+        vm.startPrank(alice);
+        cbETH.approve(address(cm), 10 * ETH_UNIT);
+        cm.depositCollateral(address(cbETH), 10 * ETH_UNIT);
+        vm.stopPrank();
+
+        assertFalse(cm.isLiquidatable(alice, address(cbETH)),
+            "Sanity check: fresh deposit is not liquidatable");
+
+        // Admin bumps threshold up to 9500 (stricter — liquidate more aggressively).
+        vm.prank(owner);
+        cm.setLiquidationThresholdBps(9500);
+
+        // Alice's position uses her snapshotted threshold (9000), not the
+        // new 9500. Without a price move, she remains non-liquidatable.
+        assertFalse(cm.isLiquidatable(alice, address(cbETH)),
+            "Mapping 3: threshold bump MUST NOT retroactively liquidate existing position");
+    }
+
+    /// @notice After a full withdrawal + redeposit, the snapshot resets to
+    ///         current values (the trader explicitly opted into new terms
+    ///         by entering a fresh position).
+    function test_mapping3_fullWithdrawThenRedeposit_resetsSnapshot() public {
+        // Alice deposits at 95% haircut.
+        cbETH.mint(alice, 20 * ETH_UNIT);
+        vm.startPrank(alice);
+        cbETH.approve(address(cm), 20 * ETH_UNIT);
+        cm.depositCollateral(address(cbETH), 10 * ETH_UNIT);
+        vm.stopPrank();
+
+        // Admin bumps haircut to 80%.
+        vm.prank(owner);
+        cm.setHaircut(address(cbETH), 8000);
+
+        // Alice fully withdraws — her position closes, snapshot reset allowed.
+        vm.prank(alice);
+        cm.withdrawCollateral(address(cbETH), 10 * ETH_UNIT);
+
+        // Alice redeposits. This is a fresh position — snapshot captures the
+        // new (bumped) haircut. The updated value reflected in creditedUsdc.
+        vm.prank(alice);
+        cm.depositCollateral(address(cbETH), 10 * ETH_UNIT);
+
+        (, uint256 creditedAfter,) = cm.getTraderCollateral(address(cbETH), alice);
+        // 10 * 3500 * 0.80 = 28_000 USDC.
+        assertEq(creditedAfter, 28_000 * USDC_UNIT,
+            "Fresh redeposit uses the current (bumped) haircut");
+    }
+
+    /// @notice Counter-test: setOperator is operational (address), NOT
+    ///         position-economics. It must not emit ParameterBump.
+    function test_mapping3_setOperator_doesNotEmitParameterBump() public {
+        bytes32 paramBumpTopic =
+            keccak256("ParameterBump(bytes32,bytes,bytes,uint256,address)");
+        vm.recordLogs();
+        vm.prank(owner);
+        cm.setOperator(makeAddr("newOp"), true);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        for (uint256 i = 0; i < logs.length; i++) {
+            assertNotEq(logs[i].topics[0], paramBumpTopic,
+                "setOperator must NOT emit ParameterBump (operational, not position economics)");
+        }
+    }
 }
