@@ -249,6 +249,200 @@ contract MEVProtectionTest is Test {
     }
 
     // ============================================================
+    //          MAPPING 3 — Prospective-only params
+    // Acceptance tests from docs/MAPPING_3_prospective_params.md
+    // ============================================================
+
+    /// @notice Commit both sides of a trade (shared setup for the tests below).
+    function _commitBoth(OrderSettlement.MatchedTrade memory trade)
+        internal returns (bytes32 makerDigest, bytes32 takerDigest)
+    {
+        makerDigest = settlement.getOrderDigest(
+            trade.maker.trader, trade.maker.marketId, trade.maker.isLong,
+            trade.maker.size, trade.maker.price, trade.maker.nonce, trade.maker.expiry
+        );
+        takerDigest = settlement.getOrderDigest(
+            trade.taker.trader, trade.taker.marketId, trade.taker.isLong,
+            trade.taker.size, trade.taker.price, trade.taker.nonce, trade.taker.expiry
+        );
+        vm.startPrank(owner);
+        settlement.commitOrder(makerDigest);
+        settlement.commitOrder(takerDigest);
+        vm.stopPrank();
+    }
+
+    function test_mapping3_feeBump_isProspective_onCommittedOrders() public {
+        // Given: default fees (maker 2bps / taker 6bps), orders committed.
+        OrderSettlement.MatchedTrade memory trade = _createTrade(1);
+        _commitBoth(trade);
+
+        // Admin bumps fees to 20/40 AFTER commit but BEFORE settle.
+        vm.prank(owner);
+        settlement.setFees(20, 40);
+
+        // Wait for the delay and settle.
+        vm.warp(block.timestamp + 3);
+        vm.prank(owner);
+        engine.updateMarkPrice(btcMarket, BTC_50K, BTC_50K);
+
+        uint256 feeRecipBalBefore = vault.balances(feeRecipient);
+        vm.prank(owner);
+        settlement.settleOne(trade);
+        uint256 feeRecipBalAfter = vault.balances(feeRecipient);
+
+        // Settlement uses snapshot fees (2/6), NOT current (20/40).
+        uint256 notional = (trade.executionPrice * trade.executionSize) / SIZE_UNIT;
+        uint256 expectedMakerFee = (notional * 2) / 10_000;
+        uint256 expectedTakerFee = (notional * 6) / 10_000;
+        uint256 expectedTotal = expectedMakerFee + expectedTakerFee;
+
+        assertEq(feeRecipBalAfter - feeRecipBalBefore, expectedTotal,
+            "Settlement MUST use snapshot fees (2/6), not current (20/40)");
+    }
+
+    function test_mapping3_feeBump_appliesToOrdersCommittedAfter() public {
+        // Given: admin bumps fees BEFORE commit.
+        vm.prank(owner);
+        settlement.setFees(20, 40);
+
+        OrderSettlement.MatchedTrade memory trade = _createTrade(2);
+        _commitBoth(trade);
+
+        vm.warp(block.timestamp + 3);
+        vm.prank(owner);
+        engine.updateMarkPrice(btcMarket, BTC_50K, BTC_50K);
+
+        uint256 feeRecipBalBefore = vault.balances(feeRecipient);
+        vm.prank(owner);
+        settlement.settleOne(trade);
+        uint256 feeRecipBalAfter = vault.balances(feeRecipient);
+
+        uint256 notional = (trade.executionPrice * trade.executionSize) / SIZE_UNIT;
+        uint256 expectedMakerFee = (notional * 20) / 10_000;
+        uint256 expectedTakerFee = (notional * 40) / 10_000;
+        uint256 expectedTotal = expectedMakerFee + expectedTakerFee;
+
+        assertEq(feeRecipBalAfter - feeRecipBalBefore, expectedTotal,
+            "Orders committed AFTER the bump settle at the new fees (20/40)");
+    }
+
+    function test_mapping3_delayBump_isProspective_onCommittedOrders() public {
+        // Given: default minSettlementDelay = 2s, order committed.
+        OrderSettlement.MatchedTrade memory trade = _createTrade(3);
+        _commitBoth(trade);
+
+        // Admin bumps delay to 30s AFTER commit.
+        vm.prank(owner);
+        settlement.setSettlementDelay(30, 600);
+
+        // Only 3s passes — would fail under the new 30s delay but the
+        // order's snapshot has delay=2s, so it should clear.
+        vm.warp(block.timestamp + 3);
+        vm.prank(owner);
+        engine.updateMarkPrice(btcMarket, BTC_50K, BTC_50K);
+
+        vm.prank(owner);
+        settlement.settleOne(trade);
+
+        (int256 size,,,,) = engine.positions(btcMarket, alice);
+        assertEq(size, int256(SIZE_UNIT),
+            "Order committed under delay=2s MUST settle after 3s even when current delay=30s");
+    }
+
+    function test_mapping3_setFees_emitsParameterBump() public {
+        // Expect two bumps: one for makerFeeBps, one for takerFeeBps.
+        // We only assert the signature appears; full topic check for makerFee.
+        vm.expectEmit(true, false, false, true);
+        emit OrderSettlement.ParameterBump(
+            keccak256("OrderSettlement.makerFeeBps"),
+            abi.encode(uint32(2)),
+            abi.encode(uint32(5)),
+            block.number,
+            owner
+        );
+        vm.expectEmit(true, false, false, true);
+        emit OrderSettlement.ParameterBump(
+            keccak256("OrderSettlement.takerFeeBps"),
+            abi.encode(uint32(6)),
+            abi.encode(uint32(15)),
+            block.number,
+            owner
+        );
+
+        vm.prank(owner);
+        settlement.setFees(5, 15);
+    }
+
+    function test_mapping3_setSettlementDelay_emitsParameterBump() public {
+        vm.expectEmit(true, false, false, true);
+        emit OrderSettlement.ParameterBump(
+            keccak256("OrderSettlement.minSettlementDelay"),
+            abi.encode(uint256(2)),
+            abi.encode(uint256(10)),
+            block.number,
+            owner
+        );
+
+        vm.prank(owner);
+        settlement.setSettlementDelay(10, 600);
+    }
+
+    function test_mapping3_setDynamicSpreadEnabled_emitsParameterBump() public {
+        vm.expectEmit(true, false, false, true);
+        emit OrderSettlement.ParameterBump(
+            keccak256("OrderSettlement.dynamicSpreadEnabled"),
+            abi.encode(true),
+            abi.encode(false),
+            block.number,
+            owner
+        );
+
+        vm.prank(owner);
+        settlement.setDynamicSpreadEnabled(false);
+    }
+
+    function test_mapping3_setDynamicSpreadTiers_emitsParameterBump() public {
+        vm.expectEmit(true, false, false, true);
+        emit OrderSettlement.ParameterBump(
+            keccak256("OrderSettlement.spreadTiersBps"),
+            abi.encode(uint32(5), uint32(15), uint32(30)),
+            abi.encode(uint32(10), uint32(20), uint32(40)),
+            block.number,
+            owner
+        );
+
+        vm.prank(owner);
+        settlement.setDynamicSpreadTiers(10, 20, 40);
+    }
+
+    /// @notice Counter-test: address-only setters (setFeeRecipient, setOperator)
+    ///         do NOT emit ParameterBump because they are not position-economics.
+    function test_mapping3_nonProspectiveSetters_doNotEmitParameterBump() public {
+        bytes32 paramBumpTopic =
+            keccak256("ParameterBump(bytes32,bytes,bytes,uint256,address)");
+
+        // setFeeRecipient
+        vm.recordLogs();
+        vm.prank(owner);
+        settlement.setFeeRecipient(makeAddr("newRecipient"));
+        Vm.Log[] memory logs1 = vm.getRecordedLogs();
+        for (uint256 i = 0; i < logs1.length; i++) {
+            assertNotEq(logs1[i].topics[0], paramBumpTopic,
+                "setFeeRecipient must NOT emit ParameterBump");
+        }
+
+        // setOperator
+        vm.recordLogs();
+        vm.prank(owner);
+        settlement.setOperator(makeAddr("newOp"), true);
+        Vm.Log[] memory logs2 = vm.getRecordedLogs();
+        for (uint256 i = 0; i < logs2.length; i++) {
+            assertNotEq(logs2[i].topics[0], paramBumpTopic,
+                "setOperator must NOT emit ParameterBump");
+        }
+    }
+
+    // ============================================================
     //              HELPERS
     // ============================================================
 

@@ -77,6 +77,24 @@ contract OrderSettlement {
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
     event OwnershipTransferStarted(address indexed currentOwner, address indexed pendingOwner);
 
+    /// @notice Emitted whenever a position-economics parameter changes prospectively.
+    /// @dev See docs/MAPPING_3_prospective_params.md. Settlement of orders committed
+    ///      before a bump uses the snapshotted parameters, NOT the new values.
+    /// @param paramId        keccak256 of the canonical parameter name
+    ///                       (e.g. keccak256("OrderSettlement.makerFeeBps")).
+    /// @param oldValue       Previous value ABI-encoded.
+    /// @param newValue       New value ABI-encoded.
+    /// @param effectiveBlock Block at which the new value begins applying to
+    ///                       newly committed orders.
+    /// @param admin          Address that triggered the update.
+    event ParameterBump(
+        bytes32 indexed paramId,
+        bytes oldValue,
+        bytes newValue,
+        uint256 effectiveBlock,
+        address indexed admin
+    );
+
     // ============================================================
     //                       EIP-712 TYPES
     // ============================================================
@@ -118,6 +136,25 @@ contract OrderSettlement {
         uint256 executionSize;   // actual size (min of both orders)
     }
 
+    /// @notice Per-order snapshot of settlement-economics parameters captured
+    ///         at commitOrder time. Used by _settleTrade to apply prospective-only
+    ///         semantics: admin bumps between commit and settle do not affect
+    ///         already-committed orders. See docs/MAPPING_3_prospective_params.md.
+    /// @dev Exists only for orders that go through the commit path. When
+    ///      minSettlementDelay is set to zero (commit-settle protection disabled),
+    ///      no snapshot is captured and _settleTrade falls back to current values —
+    ///      acceptable because operators running without delay have explicitly
+    ///      opted out of MEV protection.
+    struct OrderSnapshot {
+        uint32 makerFeeBps;
+        uint32 takerFeeBps;
+        uint256 minSettlementDelay;
+        bool dynamicSpreadEnabled;
+        uint32 spreadTier1Bps;
+        uint32 spreadTier2Bps;
+        uint32 spreadTier3Bps;
+    }
+
     // ============================================================
     //                          STATE
     // ============================================================
@@ -145,6 +182,11 @@ contract OrderSettlement {
 
     /// @notice Commit order hashes before they can be settled (MEV protection)
     mapping(bytes32 => uint256) public orderCommitTime;
+
+    /// @notice Snapshot of settlement-economics parameters at commit time.
+    ///         Mapping 3 prospective-only semantics: settlement uses these
+    ///         values, not the current contract state.
+    mapping(bytes32 => OrderSnapshot) public orderSnapshots;
 
     uint256 constant BPS = 10_000;
     uint256 constant SIZE_PRECISION = 1e8;
@@ -227,20 +269,39 @@ contract OrderSettlement {
 
     /// @notice Commit an order hash. Must be called before settlement.
     /// @dev The operator commits the order digest, then waits minSettlementDelay before settling.
+    ///      Mapping 3: snapshots current settlement-economics parameters so that
+    ///      subsequent admin bumps do not retroactively alter this order's terms.
     function commitOrder(bytes32 orderDigest) external onlyOperator {
         if (orderCommitTime[orderDigest] == 0) {
             orderCommitTime[orderDigest] = block.timestamp;
+            orderSnapshots[orderDigest] = _currentSnapshot();
         }
     }
 
     /// @notice Commit multiple order digests at once
     function commitOrderBatch(bytes32[] calldata orderDigests) external onlyOperator {
+        OrderSnapshot memory snap = _currentSnapshot();
         for (uint256 i = 0; i < orderDigests.length;) {
             if (orderCommitTime[orderDigests[i]] == 0) {
                 orderCommitTime[orderDigests[i]] = block.timestamp;
+                orderSnapshots[orderDigests[i]] = snap;
             }
             unchecked { ++i; }
         }
+    }
+
+    /// @notice Build a snapshot of current settlement-economics parameters.
+    /// @dev Private helper; called by commitOrder(Batch) and no other site.
+    function _currentSnapshot() private view returns (OrderSnapshot memory) {
+        return OrderSnapshot({
+            makerFeeBps: makerFeeBps,
+            takerFeeBps: takerFeeBps,
+            minSettlementDelay: minSettlementDelay,
+            dynamicSpreadEnabled: dynamicSpreadEnabled,
+            spreadTier1Bps: spreadTier1Bps,
+            spreadTier2Bps: spreadTier2Bps,
+            spreadTier3Bps: spreadTier3Bps
+        });
     }
 
     // ============================================================
@@ -284,34 +345,55 @@ contract OrderSettlement {
         usedNonces[taker.trader][taker.nonce] = true;
 
         // --- MEV Protection: verify commit-settle delay ---
-        if (minSettlementDelay > 0) {
+        // Mapping 3: use each digest's snapshotted delay. If no snapshot exists
+        // (operator opted into the no-commit mode with delay=0), fall back to
+        // current minSettlementDelay.
+        uint256 makerCommit = orderCommitTime[makerDigest];
+        uint256 takerCommit = orderCommitTime[takerDigest];
+        bool haveCommits = (makerCommit != 0 && takerCommit != 0);
 
-            uint256 makerCommit = orderCommitTime[makerDigest];
-            uint256 takerCommit = orderCommitTime[takerDigest];
+        if (haveCommits) {
+            // Use the delay snapshot from whichever commit is later (the one
+            // "closing" the agreement on-chain).
+            uint256 delayUsed = makerCommit > takerCommit
+                ? orderSnapshots[makerDigest].minSettlementDelay
+                : orderSnapshots[takerDigest].minSettlementDelay;
 
-            // M-4 fix: Orders MUST be pre-committed when delay > 0 (no auto-commit bypass)
-            if (makerCommit == 0 || takerCommit == 0) {
-                revert OrderTooRecent(0, minSettlementDelay);
-            } else {
-                // Check delay has passed
-                uint256 earliestSettle = makerCommit > takerCommit ? makerCommit : takerCommit;
-                if (block.timestamp < earliestSettle + minSettlementDelay) {
-                    revert OrderTooRecent(earliestSettle, minSettlementDelay);
-                }
+            uint256 earliestSettle = makerCommit > takerCommit ? makerCommit : takerCommit;
+            if (block.timestamp < earliestSettle + delayUsed) {
+                revert OrderTooRecent(earliestSettle, delayUsed);
             }
+        } else if (minSettlementDelay > 0) {
+            // Current delay requires commits, but neither side has committed.
+            // M-4 fix preserved: no auto-commit bypass.
+            revert OrderTooRecent(0, minSettlementDelay);
         }
+        // else: minSettlementDelay == 0 and no commits → skip (legacy no-MEV mode).
 
         // --- Collect fees (with dynamic spread) ---
-        // G-16/G-17: Cache storage reads
+        // Mapping 3: use each digest's snapshotted fee. If no snapshot exists,
+        // fall back to current — only reachable in no-MEV mode.
+        // G-16/G-17: Cache reads.
         uint256 notional = (trade.executionPrice * trade.executionSize) / SIZE_PRECISION;
-        uint32 _makerFeeBps = makerFeeBps;
-        uint32 _takerFeeBps = takerFeeBps;
+        uint32 _makerFeeBps = haveCommits ? orderSnapshots[makerDigest].makerFeeBps : makerFeeBps;
+        uint32 _takerFeeBps = haveCommits ? orderSnapshots[takerDigest].takerFeeBps : takerFeeBps;
         address _feeRecipient = feeRecipient;
 
         uint256 mFee = (notional * _makerFeeBps) / BPS;
 
-        // Dynamic spread: extra fee on taker if their trade increases OI skew
-        uint32 extraSpread = _calculateDynamicSpread(taker.marketId, taker.isLong);
+        // Dynamic spread: extra fee on taker if their trade increases OI skew.
+        // Uses the TAKER's snapshot (it is the taker that pays the spread).
+        uint32 extraSpread;
+        if (haveCommits) {
+            OrderSnapshot storage ts = orderSnapshots[takerDigest];
+            extraSpread = _calculateDynamicSpreadWithParams(
+                taker.marketId, taker.isLong,
+                ts.dynamicSpreadEnabled,
+                ts.spreadTier1Bps, ts.spreadTier2Bps, ts.spreadTier3Bps
+            );
+        } else {
+            extraSpread = _calculateDynamicSpread(taker.marketId, taker.isLong);
+        }
         uint256 effectiveTakerBps = uint256(_takerFeeBps) + uint256(extraSpread);
         uint256 tFee = (notional * effectiveTakerBps) / BPS;
 
@@ -430,20 +512,48 @@ contract OrderSettlement {
 
     event FeesUpdated(uint32 makerFeeBps, uint32 takerFeeBps);
 
+    /// @notice Update maker/taker fees in bps. Prospective-only (Mapping 3):
+    ///         orders already committed settle at their snapshotted fees.
     function setFees(uint32 _maker, uint32 _taker) external onlyOwner {
         require(_maker <= 1000 && _taker <= 1000, "Fee too high");
+        uint32 oldMaker = makerFeeBps;
+        uint32 oldTaker = takerFeeBps;
         makerFeeBps = _maker;
         takerFeeBps = _taker;
         emit FeesUpdated(_maker, _taker);
+        emit ParameterBump(
+            keccak256("OrderSettlement.makerFeeBps"),
+            abi.encode(oldMaker),
+            abi.encode(_maker),
+            block.number,
+            msg.sender
+        );
+        emit ParameterBump(
+            keccak256("OrderSettlement.takerFeeBps"),
+            abi.encode(oldTaker),
+            abi.encode(_taker),
+            block.number,
+            msg.sender
+        );
     }
 
+    /// @notice Update the commit-settle delay window. Prospective-only (Mapping 3):
+    ///         orders already committed use the snapshotted delay.
     function setSettlementDelay(uint256 minDelay, uint256 maxDelay) external onlyOwner {
         // M-1 fix: Validate delay bounds
         require(maxDelay >= minDelay, "max < min");
         require(maxDelay <= 3600, "maxDelay too high"); // max 1 hour
+        uint256 oldMin = minSettlementDelay;
         minSettlementDelay = minDelay;
         maxSettlementDelay = maxDelay;
         emit TimeLockUpdated(minDelay);
+        emit ParameterBump(
+            keccak256("OrderSettlement.minSettlementDelay"),
+            abi.encode(oldMin),
+            abi.encode(minDelay),
+            block.number,
+            msg.sender
+        );
     }
 
     function pause() external onlyOwner { paused = true; emit PauseStatusChanged(true); }
@@ -453,12 +563,31 @@ contract OrderSettlement {
     //                  DYNAMIC SPREAD
     // ============================================================
 
-    /// @notice Calculate extra spread fee based on OI skew
-    /// @dev Only penalizes the side that INCREASES the imbalance
+    /// @notice Calculate extra spread fee based on OI skew using current contract state.
+    /// @dev Only penalizes the side that INCREASES the imbalance.
+    ///      Used on the legacy no-MEV-delay path (no snapshot available).
     function _calculateDynamicSpread(bytes32 marketId, bool isLong)
         internal view returns (uint32 extraBps)
     {
-        if (!dynamicSpreadEnabled) return 0;
+        return _calculateDynamicSpreadWithParams(
+            marketId, isLong,
+            dynamicSpreadEnabled,
+            spreadTier1Bps, spreadTier2Bps, spreadTier3Bps
+        );
+    }
+
+    /// @notice Calculate extra spread fee using explicit parameters (for snapshot path).
+    /// @dev Mapping 3: when orders come through the commit path, we pass the
+    ///      taker's snapshotted spread configuration instead of reading current state.
+    function _calculateDynamicSpreadWithParams(
+        bytes32 marketId,
+        bool isLong,
+        bool _dynamicSpreadEnabled,
+        uint32 _tier1Bps,
+        uint32 _tier2Bps,
+        uint32 _tier3Bps
+    ) internal view returns (uint32 extraBps) {
+        if (!_dynamicSpreadEnabled) return 0;
 
         // G-18: Use lightweight getOpenInterest instead of full markets() struct
         try IPerpEngineOI(address(engine)).getOpenInterest(marketId) returns (
@@ -481,10 +610,10 @@ contract OrderSettlement {
             uint256 dominant = oiLong > oiShort ? oiLong : oiShort;
             uint256 skewBps = (dominant * BPS) / totalOi;
 
-            if (skewBps >= 7000) return spreadTier3Bps;  // >70% skew
-            if (skewBps >= 5000) return spreadTier2Bps;  // >50% skew
-            if (skewBps >= 3000) return spreadTier1Bps;  // >30% skew
-            return 0;                                      // balanced
+            if (skewBps >= 7000) return _tier3Bps;  // >70% skew
+            if (skewBps >= 5000) return _tier2Bps;  // >50% skew
+            if (skewBps >= 3000) return _tier1Bps;  // >30% skew
+            return 0;                                // balanced
         } catch {
             return 0; // if engine call fails, no extra spread
         }
@@ -493,16 +622,40 @@ contract OrderSettlement {
     event DynamicSpreadUpdated(bool enabled);
     event DynamicSpreadTiersUpdated(uint32 tier1, uint32 tier2, uint32 tier3);
 
+    /// @notice Toggle dynamic-spread mode. Prospective-only (Mapping 3):
+    ///         orders already committed retain the mode active at their commit.
     function setDynamicSpreadEnabled(bool enabled) external onlyOwner {
+        bool old = dynamicSpreadEnabled;
         dynamicSpreadEnabled = enabled;
         emit DynamicSpreadUpdated(enabled);
+        emit ParameterBump(
+            keccak256("OrderSettlement.dynamicSpreadEnabled"),
+            abi.encode(old),
+            abi.encode(enabled),
+            block.number,
+            msg.sender
+        );
     }
 
+    /// @notice Update dynamic-spread tiers. Prospective-only (Mapping 3):
+    ///         orders already committed settle at their snapshotted tiers.
     function setDynamicSpreadTiers(uint32 tier1, uint32 tier2, uint32 tier3) external onlyOwner {
         require(tier1 <= tier2 && tier2 <= tier3, "Tiers must be ascending");
+        uint32 old1 = spreadTier1Bps;
+        uint32 old2 = spreadTier2Bps;
+        uint32 old3 = spreadTier3Bps;
         spreadTier1Bps = tier1;
         spreadTier2Bps = tier2;
         spreadTier3Bps = tier3;
         emit DynamicSpreadTiersUpdated(tier1, tier2, tier3);
+        // One bump event for the tier triple. paramId identifies the tier set;
+        // values are ABI-encoded tuples of (tier1, tier2, tier3).
+        emit ParameterBump(
+            keccak256("OrderSettlement.spreadTiersBps"),
+            abi.encode(old1, old2, old3),
+            abi.encode(tier1, tier2, tier3),
+            block.number,
+            msg.sender
+        );
     }
 }
