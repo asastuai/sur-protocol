@@ -663,7 +663,7 @@ contract PerpEngineTest is Test {
         // Given: maxExposureBps disabled, open a position for alice.
         vm.prank(operator);
         engine.openPosition(btcMarketId, alice, int256(1 * SIZE), BTC_PRICE);
-        (int256 sizeBefore,,,,) = engine.positions(btcMarketId, alice);
+        (int256 sizeBefore,,,,,) = engine.positions(btcMarketId, alice);
         assertEq(sizeBefore, int256(1 * SIZE));
 
         // Admin bumps the exposure cap to a tiny value.
@@ -671,7 +671,7 @@ contract PerpEngineTest is Test {
         engine.setMaxExposureBps(1); // 0.01% — way below alice's position
 
         // Position remains open with the same size. No force-close, no state change.
-        (int256 sizeAfter,,,,) = engine.positions(btcMarketId, alice);
+        (int256 sizeAfter,,,,,) = engine.positions(btcMarketId, alice);
         assertEq(sizeAfter, sizeBefore,
             "Exposure-cap bump MUST NOT retroactively alter an open position");
     }
@@ -713,7 +713,10 @@ contract PerpEngineTest is Test {
     ///         tier snapshotting. Until that refactor lands, setMarginTiers
     ///         does NOT emit ParameterBump — emitting would incorrectly
     ///         signal that the prospective-only convention is upheld.
-    function test_mapping3_setMarginTiers_doesNotEmitParameterBump_pendingRefactor() public {
+    /// @notice Post-refactor: setMarginTiers now emits ParameterBump and
+    ///         pushes a new entry into the per-market tier-version history.
+    ///         See docs/MAPPING_3_MARGIN_TIERS_DESIGN.md.
+    function test_mapping3_setMarginTiers_emitsParameterBump() public {
         PerpEngine.MarginTier[] memory tiers = new PerpEngine.MarginTier[](1);
         tiers[0] = PerpEngine.MarginTier({
             maxNotional: 0,
@@ -721,15 +724,99 @@ contract PerpEngineTest is Test {
             maintenanceMarginBps: 250
         });
 
-        bytes32 paramBumpTopic =
-            keccak256("ParameterBump(bytes32,bytes,bytes,uint256,address)");
-        vm.recordLogs();
+        uint256 oldVersion = engine.marketCurrentTierVersion(btcMarketId);
+        uint256 expectedNewVersion = oldVersion + 1;
+
+        vm.expectEmit(true, false, false, true);
+        emit PerpEngine.ParameterBump(
+            keccak256(abi.encodePacked("PerpEngine.marginTiers:", btcMarketId)),
+            abi.encode(oldVersion),
+            abi.encode(expectedNewVersion),
+            block.number,
+            owner
+        );
+
         vm.prank(owner);
         engine.setMarginTiers(btcMarketId, tiers);
-        Vm.Log[] memory logs = vm.getRecordedLogs();
-        for (uint256 i = 0; i < logs.length; i++) {
-            assertNotEq(logs[i].topics[0], paramBumpTopic,
-                "setMarginTiers does not emit ParameterBump until the per-position snapshot refactor lands");
-        }
+
+        assertEq(engine.marketCurrentTierVersion(btcMarketId), expectedNewVersion,
+            "marketCurrentTierVersion MUST increment after setMarginTiers");
+    }
+
+    /// @notice The headline prospective-only invariant for margin tiers:
+    ///         an admin bump of the maintenance margin MUST NOT retroactively
+    ///         make an existing position liquidatable. The position's
+    ///         snapshotted tier version preserves its original regime.
+    function test_mapping3_marginTiers_bumpIsProspective_onExistingPosition() public {
+        // Configure v1 tiers: maint 2.5%
+        PerpEngine.MarginTier[] memory v1 = new PerpEngine.MarginTier[](1);
+        v1[0] = PerpEngine.MarginTier({
+            maxNotional: 0,
+            initialMarginBps: 500,
+            maintenanceMarginBps: 250
+        });
+        vm.prank(owner);
+        engine.setMarginTiers(btcMarketId, v1);
+
+        // Alice opens a position under v1.
+        vm.prank(operator);
+        engine.openPosition(btcMarketId, alice, int256(1 * SIZE), BTC_PRICE);
+
+        // Sanity: she's not liquidatable under v1.
+        assertFalse(engine.isLiquidatable(btcMarketId, alice));
+
+        // Admin bumps to v2: maint margin 5% (much stricter).  Under the
+        // new tier, many positions that were fine would now be liquidatable.
+        PerpEngine.MarginTier[] memory v2 = new PerpEngine.MarginTier[](1);
+        v2[0] = PerpEngine.MarginTier({
+            maxNotional: 0,
+            initialMarginBps: 1_000,
+            maintenanceMarginBps: 500
+        });
+        vm.prank(owner);
+        engine.setMarginTiers(btcMarketId, v2);
+
+        // Post-bump: Alice's position uses its snapshotted v1 tier.
+        // Without any price move, she is still NOT liquidatable.
+        assertFalse(engine.isLiquidatable(btcMarketId, alice),
+            "Mapping 3: margin-tier bump MUST NOT retroactively liquidate an open position");
+    }
+
+    /// @notice After the position fully closes, a reopen captures the
+    ///         then-current tier version (the trader explicitly enters
+    ///         under the new regime).
+    function test_mapping3_marginTiers_fullCloseThenReopen_resetsSnapshot() public {
+        PerpEngine.MarginTier[] memory v1 = new PerpEngine.MarginTier[](1);
+        v1[0] = PerpEngine.MarginTier({
+            maxNotional: 0,
+            initialMarginBps: 500,
+            maintenanceMarginBps: 250
+        });
+        vm.prank(owner);
+        engine.setMarginTiers(btcMarketId, v1);
+
+        // Open and then fully close.
+        vm.prank(operator);
+        engine.openPosition(btcMarketId, alice, int256(1 * SIZE), BTC_PRICE);
+        vm.prank(operator);
+        engine.closePosition(btcMarketId, alice, BTC_PRICE);
+
+        // Bump to v2.
+        PerpEngine.MarginTier[] memory v2 = new PerpEngine.MarginTier[](1);
+        v2[0] = PerpEngine.MarginTier({
+            maxNotional: 0,
+            initialMarginBps: 1_000,
+            maintenanceMarginBps: 500
+        });
+        vm.prank(owner);
+        engine.setMarginTiers(btcMarketId, v2);
+
+        // Reopen.  The new position must snapshot v2.
+        vm.prank(operator);
+        engine.openPosition(btcMarketId, alice, int256(1 * SIZE), BTC_PRICE);
+
+        (,,,,,uint256 snapVersion) = engine.positions(btcMarketId, alice);
+        assertEq(snapVersion, engine.marketCurrentTierVersion(btcMarketId),
+            "Reopened position MUST snapshot the current (v2) tier version");
     }
 }

@@ -243,7 +243,7 @@ contract GMXFeaturesTest is Test {
         engine.openPosition(btcMarketId, alice, 1 * int256(SIZE), BTC_PRICE);
 
         // Verify position opened
-        (int256 size,,,,) = engine.positions(btcMarketId, alice);
+        (int256 size,,,,,) = engine.positions(btcMarketId, alice);
         assertEq(size, 1 * int256(SIZE));
     }
 
@@ -438,7 +438,7 @@ contract GMXFeaturesTest is Test {
         vm.prank(operator);
         engine.openPosition(btcMarketId, alice, 2 * int256(SIZE), BTC_PRICE);
 
-        (int256 size,,,,) = engine.positions(btcMarketId, alice);
+        (int256 size,,,,,) = engine.positions(btcMarketId, alice);
         assertEq(size, 2 * int256(SIZE), "Position should be open");
     }
 }

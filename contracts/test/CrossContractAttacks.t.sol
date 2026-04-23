@@ -133,7 +133,7 @@ contract CrossContractAttacks is Test {
 
         // Eve closes at profit
         _setPrice(25_000 * U); // refresh
-        (int256 eveSize,,,,) = engine.positions(btcMkt, eve);
+        (int256 eveSize,,,,,) = engine.positions(btcMkt, eve);
         if (eveSize != 0) {
             vm.prank(owner);
             try engine.openPosition(btcMkt, eve, -eveSize, 25_000 * U) {} catch {}
@@ -186,7 +186,7 @@ contract CrossContractAttacks is Test {
         vm.prank(eve);
         try cm.withdrawCollateral(address(cbETH), 100 ether) {
             // If it succeeded, verify position is still safe
-            (int256 size,,,,) = engine.positions(btcMkt, eve);
+            (int256 size,,,,,) = engine.positions(btcMkt, eve);
             if (size != 0) {
                 // Position still open with no collateral backing!
                 uint256 newColBal = vault.collateralBalances(eve);
@@ -233,7 +233,7 @@ contract CrossContractAttacks is Test {
             emit log_string("  [INFO] Dark pool trade executed while eve is underwater");
 
             // Check if eve escaped her position
-            (int256 eveSize,,,,) = engine.positions(btcMkt, eve);
+            (int256 eveSize,,,,,) = engine.positions(btcMkt, eve);
             emit log_named_int("  Eve size after dark pool", eveSize);
 
             // Eve now has 1 BTC long (original) + 1 BTC short (dark pool) = net 0?
@@ -339,7 +339,7 @@ contract CrossContractAttacks is Test {
 
         // If ADL is required, execute it on profitable bob
         if (adlRequired && bobPnl > 0) {
-            (int256 bobSize,,,,) = engine.positions(btcMkt, bob);
+            (int256 bobSize,,,,,) = engine.positions(btcMkt, bob);
             if (bobSize != 0) {
                 vm.prank(keeper);
                 try adl.executeADL(btcMkt, bob, uint256(-bobSize) / 2, 25_000 * U, 5000 * U) {
@@ -390,7 +390,7 @@ contract CrossContractAttacks is Test {
         // Eve tries to crash the price to profit from her short
         _setPrice(48_000 * U);
 
-        (int256 eveSize,,,,) = engine.positions(btcMkt, eve);
+        (int256 eveSize,,,,,) = engine.positions(btcMkt, eve);
         int256 evePnl = engine.getUnrealizedPnl(btcMkt, eve);
 
         emit log_named_int("  Eve PnL from sandwich", evePnl);
@@ -509,7 +509,7 @@ contract CrossContractAttacks is Test {
         );
 
         // Verify eve's ETH position still exists (partial liquidation shouldn't nuke everything)
-        (int256 eveEthSize,,,,) = engine.positions(ethMkt, eve);
+        (int256 eveEthSize,,,,,) = engine.positions(ethMkt, eve);
         emit log_named_int("  Eve ETH position after BTC liquidation", eveEthSize);
 
         emit log_string("  [OK] Multi-market consistency maintained");
@@ -595,7 +595,7 @@ contract CrossContractAttacks is Test {
         liquidator.liquidate(btcMkt, eve);
 
         // Keeper 2 tries same position
-        (int256 eveSizeAfter,,,,) = engine.positions(btcMkt, eve);
+        (int256 eveSizeAfter,,,,,) = engine.positions(btcMkt, eve);
         if (eveSizeAfter == 0) {
             // Position fully closed - should revert
             vm.prank(keeper2);

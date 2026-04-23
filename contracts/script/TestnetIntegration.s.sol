@@ -160,7 +160,7 @@ contract TestnetIntegration is Script {
             engine.openPosition(btcMarket, deployer, int256(SIZE_UNIT / 100), 50_000 * USDC_UNIT);
             console.log("  Opened: 0.01 BTC LONG @ $50,000");
 
-            (int256 size, uint256 entry, uint256 margin,,) = engine.positions(btcMarket, deployer);
+            (int256 size, uint256 entry, uint256 margin,,,) = engine.positions(btcMarket, deployer);
             console.log("  Position size:", uint256(size));
             console.log("  Entry price:", entry);
             console.log("  Margin locked:", margin);
@@ -169,7 +169,7 @@ contract TestnetIntegration is Script {
             engine.openPosition(btcMarket, deployer, -int256(SIZE_UNIT / 100), 50_000 * USDC_UNIT);
             console.log("  Position closed");
 
-            (size,,,,) = engine.positions(btcMarket, deployer);
+            (size,,,,,) = engine.positions(btcMarket, deployer);
             require(size == 0, "Position not closed!");
             console.log("  Verified: position size = 0");
         } else {

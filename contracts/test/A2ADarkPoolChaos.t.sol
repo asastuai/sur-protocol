@@ -169,8 +169,8 @@ contract A2ADarkPoolChaosTest is Test {
         darkpool.acceptAndSettle(intentId, respId);
 
         // Verify positions
-        (int256 sizeA,,,,) = engine.positions(btcMkt, agentA);
-        (int256 sizeB,,,,) = engine.positions(btcMkt, agentB);
+        (int256 sizeA,,,,,) = engine.positions(btcMkt, agentA);
+        (int256 sizeB,,,,,) = engine.positions(btcMkt, agentB);
         assertEq(sizeA, int256(1 * S), "AgentA should be long");
         assertEq(sizeB, -int256(1 * S), "AgentB should be short");
 

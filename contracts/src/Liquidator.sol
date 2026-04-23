@@ -45,7 +45,7 @@ contract Liquidator {
     function liquidate(bytes32 marketId, address trader) external whenNotPaused {
         if (trader == address(0)) revert ZeroAddress();
 
-        (int256 size,,,,) = engine.positions(marketId, trader);
+        (int256 size,,,,,) = engine.positions(marketId, trader);
         if (size == 0) revert NoPosition(marketId, trader);
         if (!engine.isLiquidatable(marketId, trader))
             revert PositionNotLiquidatable(marketId, trader);
@@ -65,7 +65,7 @@ contract Liquidator {
     {
         require(marketIds.length == traders.length, "Length mismatch");
         for (uint256 i = 0; i < marketIds.length;) {
-            (int256 size,,,,) = engine.positions(marketIds[i], traders[i]);
+            (int256 size,,,,,) = engine.positions(marketIds[i], traders[i]);
             if (size != 0 && engine.isLiquidatable(marketIds[i], traders[i])) {
                 try engine.liquidatePosition(marketIds[i], traders[i], msg.sender) {
                     unchecked {
@@ -90,7 +90,7 @@ contract Liquidator {
         require(marketIds.length == traders.length, "Length mismatch");
         liquidatable = new bool[](marketIds.length);
         for (uint256 i = 0; i < marketIds.length;) {
-            (int256 size,,,,) = engine.positions(marketIds[i], traders[i]);
+            (int256 size,,,,,) = engine.positions(marketIds[i], traders[i]);
             if (size != 0) liquidatable[i] = engine.isLiquidatable(marketIds[i], traders[i]);
             unchecked { ++i; }
         }
@@ -99,7 +99,7 @@ contract Liquidator {
     function canLiquidate(bytes32 marketId, address trader)
         external view returns (bool can, int256 posSize)
     {
-        (posSize,,,,) = engine.positions(marketId, trader);
+        (posSize,,,,,) = engine.positions(marketId, trader);
         if (posSize != 0) can = engine.isLiquidatable(marketId, trader);
     }
 

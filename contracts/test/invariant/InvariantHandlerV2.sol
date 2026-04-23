@@ -144,7 +144,7 @@ contract InvariantHandlerV2 is Test {
 
     function closeBtcPosition(uint256 actorSeed) external {
         address actor = _getActor(actorSeed);
-        (int256 size,,,,) = engine.positions(btcMarket, actor);
+        (int256 size,,,,,) = engine.positions(btcMarket, actor);
         if (size == 0) return;
 
         vm.prank(owner);
@@ -155,7 +155,7 @@ contract InvariantHandlerV2 is Test {
 
     function closeEthPosition(uint256 actorSeed) external {
         address actor = _getActor(actorSeed);
-        (int256 size,,,,) = engine.positions(ethMarket, actor);
+        (int256 size,,,,,) = engine.positions(ethMarket, actor);
         if (size == 0) return;
 
         vm.prank(owner);
@@ -182,7 +182,7 @@ contract InvariantHandlerV2 is Test {
         address actor = _getActor(actorSeed);
 
         // Try BTC market
-        (int256 btcSize,,,,) = engine.positions(btcMarket, actor);
+        (int256 btcSize,,,,,) = engine.positions(btcMarket, actor);
         if (btcSize != 0 && engine.isLiquidatable(btcMarket, actor)) {
             vm.prank(actors[0]); // any actor as keeper
             try liquidator.liquidate(btcMarket, actor) {
@@ -191,7 +191,7 @@ contract InvariantHandlerV2 is Test {
         }
 
         // Try ETH market
-        (int256 ethSize,,,,) = engine.positions(ethMarket, actor);
+        (int256 ethSize,,,,,) = engine.positions(ethMarket, actor);
         if (ethSize != 0 && engine.isLiquidatable(ethMarket, actor)) {
             vm.prank(actors[0]);
             try liquidator.liquidate(ethMarket, actor) {
@@ -252,7 +252,7 @@ contract InvariantHandlerV2 is Test {
     /// @notice Net open interest across all actors for a market
     function netOpenInterest(bytes32 marketId) external view returns (int256 net) {
         for (uint256 i = 0; i < actors.length; i++) {
-            (int256 size,,,,) = engine.positions(marketId, actors[i]);
+            (int256 size,,,,,) = engine.positions(marketId, actors[i]);
             net += size;
         }
     }

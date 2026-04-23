@@ -159,7 +159,7 @@ contract AutoDeleveragingChaosTest is Test {
         engine.updateMarkPrice(btcMkt, 55_000 * U, 55_000 * U);
 
         // Should work now (if position still profitable)
-        (int256 size,,,,) = engine.positions(btcMkt, alice);
+        (int256 size,,,,,) = engine.positions(btcMkt, alice);
         if (size != 0) {
             int256 pnl = engine.getUnrealizedPnl(btcMkt, alice);
             if (pnl > 0) {

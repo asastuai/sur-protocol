@@ -401,7 +401,7 @@ contract OrderSettlementChaosTest is Test {
         }
 
         // Check trade 1 didn't settle
-        (int256 sz,,,,) = engine.positions(btcMkt, addrs[0]);
+        (int256 sz,,,,,) = engine.positions(btcMkt, addrs[0]);
         if (sz == 0) {
             emit log_string("  [OK] Trade 1 rolled back (atomic)");
         } else {

@@ -252,7 +252,7 @@ contract LoadTest is Test {
         uint256 liquidated;
         for (uint256 i = 0; i < 50; i += 2) {
             address trader = traderAddrs[i]; // longs at even indices
-            (int256 size,,,,) = engine.positions(btcMarket, trader);
+            (int256 size,,,,,) = engine.positions(btcMarket, trader);
             if (size != 0 && engine.isLiquidatable(btcMarket, trader)) {
                 vm.prank(keeper);
                 liquidator.liquidate(btcMarket, trader);
@@ -338,7 +338,7 @@ contract LoadTest is Test {
 
         // Also some traders close their BTC positions (shorts from phase 2)
         for (uint256 i = 1; i < 20; i += 2) {
-            (int256 size,,,,) = engine.positions(btcMarket, traderAddrs[i]);
+            (int256 size,,,,,) = engine.positions(btcMarket, traderAddrs[i]);
             if (size != 0) {
                 // Short closes by going long
                 uint256 absSize = size < 0 ? uint256(-size) : uint256(size);
@@ -383,7 +383,7 @@ contract LoadTest is Test {
         address[] memory tgts = new address[](NUM_TRADERS);
 
         for (uint256 i = 0; i < NUM_TRADERS; i++) {
-            (int256 size,,,,) = engine.positions(ethMarket, traderAddrs[i]);
+            (int256 size,,,,,) = engine.positions(ethMarket, traderAddrs[i]);
             if (size > 0 && engine.isLiquidatable(ethMarket, traderAddrs[i])) {
                 mkts[batchSize] = ethMarket;
                 tgts[batchSize] = traderAddrs[i];
@@ -417,8 +417,8 @@ contract LoadTest is Test {
         for (uint256 i = 70; i < NUM_TRADERS; i++) {
             uint256 bal = vault.balances(traderAddrs[i]);
             // Only withdraw if no open positions and has balance
-            (int256 btcSize,,,,) = engine.positions(btcMarket, traderAddrs[i]);
-            (int256 ethSize,,,,) = engine.positions(ethMarket, traderAddrs[i]);
+            (int256 btcSize,,,,,) = engine.positions(btcMarket, traderAddrs[i]);
+            (int256 ethSize,,,,,) = engine.positions(ethMarket, traderAddrs[i]);
 
             if (btcSize == 0 && ethSize == 0 && bal > 0) {
                 vm.prank(traderAddrs[i]);
@@ -456,8 +456,8 @@ contract LoadTest is Test {
         uint256 openBtc;
         uint256 openEth;
         for (uint256 i = 0; i < NUM_TRADERS; i++) {
-            (int256 s1,,,,) = engine.positions(btcMarket, traderAddrs[i]);
-            (int256 s2,,,,) = engine.positions(ethMarket, traderAddrs[i]);
+            (int256 s1,,,,,) = engine.positions(btcMarket, traderAddrs[i]);
+            (int256 s2,,,,,) = engine.positions(ethMarket, traderAddrs[i]);
             if (s1 != 0) openBtc++;
             if (s2 != 0) openEth++;
         }

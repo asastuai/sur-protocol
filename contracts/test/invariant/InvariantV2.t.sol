@@ -164,8 +164,8 @@ contract InvariantV2Test is StdInvariant, Test {
     function invariant_v2_noStuckFunds() public view {
         for (uint256 i = 0; i < handler.actorCount(); i++) {
             address actor = handler.getActor(i);
-            (int256 btcSize,,,,) = engine.positions(btcMarket, actor);
-            (int256 ethSize,,,,) = engine.positions(ethMarket, actor);
+            (int256 btcSize,,,,,) = engine.positions(btcMarket, actor);
+            (int256 ethSize,,,,,) = engine.positions(ethMarket, actor);
 
             if (btcSize == 0 && ethSize == 0) {
                 // Actor with no positions should be able to withdraw their full balance

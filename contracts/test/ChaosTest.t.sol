@@ -123,11 +123,11 @@ contract ChaosTest is Test {
         // Liquidate ALL longs - they're all deeply underwater
         uint256 liquidated;
         for (uint256 i = 0; i < numTraders; i += 2) {
-            (int256 sz,,,,) = engine.positions(btcMkt, addrs[i]);
+            (int256 sz,,,,,) = engine.positions(btcMkt, addrs[i]);
             if (sz != 0) {
                 // May need multiple rounds due to partial liquidation
                 for (uint256 r = 0; r < 25; r++) {
-                    (sz,,,,) = engine.positions(btcMkt, addrs[i]);
+                    (sz,,,,,) = engine.positions(btcMkt, addrs[i]);
                     if (sz == 0) break;
                     if (!engine.isLiquidatable(btcMkt, addrs[i])) break;
                     vm.prank(keeper);
@@ -220,7 +220,7 @@ contract ChaosTest is Test {
 
             // Liquidate whatever we can
             for (uint256 i = 0; i < 500; i++) {
-                (int256 sz,,,,) = engine.positions(btcMkt, addrs[i]);
+                (int256 sz,,,,,) = engine.positions(btcMkt, addrs[i]);
                 if (sz != 0 && engine.isLiquidatable(btcMkt, addrs[i])) {
                     vm.prank(keeper);
                     try liquidator.liquidate(btcMkt, addrs[i]) {} catch {}
@@ -257,7 +257,7 @@ contract ChaosTest is Test {
         // All longs are dead - liquidate them
         for (uint256 i = 0; i < 100; i += 2) {
             for (uint256 r = 0; r < 25; r++) {
-                (int256 sz,,,,) = engine.positions(btcMkt, addrs[i]);
+                (int256 sz,,,,,) = engine.positions(btcMkt, addrs[i]);
                 if (sz == 0) break;
                 if (!engine.isLiquidatable(btcMkt, addrs[i])) break;
                 vm.prank(keeper);
@@ -271,7 +271,7 @@ contract ChaosTest is Test {
         // Shorts should have massive unrealized profit
         // But can they actually realize it? Close all shorts
         for (uint256 i = 1; i < 100; i += 2) {
-            (int256 sz,,,,) = engine.positions(btcMkt, addrs[i]);
+            (int256 sz,,,,,) = engine.positions(btcMkt, addrs[i]);
             if (sz != 0) {
                 vm.prank(owner);
                 engine.closePosition(btcMkt, addrs[i], 100_000 * U);
@@ -330,7 +330,7 @@ contract ChaosTest is Test {
         // Try to close all positions - funding should have eroded margins
         uint256 closable;
         for (uint256 i = 0; i < 50; i++) {
-            (int256 sz,,,,) = engine.positions(btcMkt, addrs[i]);
+            (int256 sz,,,,,) = engine.positions(btcMkt, addrs[i]);
             if (sz != 0) {
                 vm.prank(owner);
                 try engine.closePosition(btcMkt, addrs[i], 51_000 * U) {
@@ -385,7 +385,7 @@ contract ChaosTest is Test {
         assertGe(feeAfter, feeBefore, "Fees should not decrease");
 
         // Position should be clean
-        (int256 sz,,,,) = engine.positions(btcMkt, trader);
+        (int256 sz,,,,,) = engine.positions(btcMkt, trader);
         assertEq(sz, 0, "Position should be closed");
 
         (bool healthy,,) = vault.healthCheck();
@@ -409,7 +409,7 @@ contract ChaosTest is Test {
         vm.prank(owner);
         engine.openPosition(btcMkt, whale, int256(100 * S), BTC_PRICE);
 
-        (int256 sz,, uint256 margin,,) = engine.positions(btcMkt, whale);
+        (int256 sz,, uint256 margin,,,) = engine.positions(btcMkt, whale);
         assertEq(sz, int256(100 * S), "Should have 100 BTC position");
         assertGt(margin, 0, "Margin should be non-zero");
 
@@ -519,7 +519,7 @@ contract ChaosTest is Test {
         uint256 failed;
         for (uint256 i = 0; i < 100; i += 2) {
             for (uint256 r = 0; r < 25; r++) {
-                (int256 sz,,,,) = engine.positions(btcMkt, addrs[i]);
+                (int256 sz,,,,,) = engine.positions(btcMkt, addrs[i]);
                 if (sz == 0) break;
                 if (!engine.isLiquidatable(btcMkt, addrs[i])) break;
                 vm.prank(keeper);
@@ -649,7 +649,7 @@ contract ChaosTest is Test {
         uint256 totalLiq;
         for (uint256 m = 0; m < 10; m++) {
             for (uint256 i = 0; i < 100; i++) {
-                (int256 sz,,,,) = engine.positions(mktIds[m], addrs[i]);
+                (int256 sz,,,,,) = engine.positions(mktIds[m], addrs[i]);
                 if (sz != 0 && engine.isLiquidatable(mktIds[m], addrs[i])) {
                     vm.prank(keeper);
                     try liquidator.liquidate(mktIds[m], addrs[i]) {
@@ -699,7 +699,7 @@ contract ChaosTest is Test {
 
             if (action == 0 || action == 1) {
                 // Open or increase
-                (int256 sz,,,,) = engine.positions(btcMkt, t1);
+                (int256 sz,,,,,) = engine.positions(btcMkt, t1);
                 if (sz == 0) {
                     bool goLong = action == 0;
                     vm.prank(owner);
@@ -707,14 +707,14 @@ contract ChaosTest is Test {
                 }
             } else if (action == 2) {
                 // Close if open
-                (int256 sz,,,,) = engine.positions(btcMkt, t1);
+                (int256 sz,,,,,) = engine.positions(btcMkt, t1);
                 if (sz != 0) {
                     vm.prank(owner);
                     try engine.closePosition(btcMkt, t1, priceUsd * U) {} catch {}
                 }
             } else {
                 // Try liquidation
-                (int256 sz,,,,) = engine.positions(btcMkt, t1);
+                (int256 sz,,,,,) = engine.positions(btcMkt, t1);
                 if (sz != 0 && engine.isLiquidatable(btcMkt, t1)) {
                     vm.prank(keeper);
                     try liquidator.liquidate(btcMkt, t1) {} catch {}
@@ -752,7 +752,7 @@ contract ChaosTest is Test {
         assertEq(afterBal, 0, "All free balance should be withdrawn");
 
         // But position still exists
-        (int256 sz,, uint256 margin,,) = engine.positions(btcMkt, trader);
+        (int256 sz,, uint256 margin,,,) = engine.positions(btcMkt, trader);
         assertEq(sz, int256(S));
         assertGt(margin, 0);
 
@@ -852,7 +852,7 @@ contract ChaosTest is Test {
         uint256 totalBalBefore = 0;
         for (uint256 i = 0; i < numAttackers + numVictims; i++) {
             totalBalBefore += vault.balances(addrs[i]);
-            (,, uint256 margin,,) = engine.positions(btcMkt, addrs[i]);
+            (,, uint256 margin,,,) = engine.positions(btcMkt, addrs[i]);
             totalBalBefore += margin;
         }
 
@@ -866,7 +866,7 @@ contract ChaosTest is Test {
         // Close all positions
         _setPrice(btcMkt, 50_000);
         for (uint256 i = 0; i < numAttackers + numVictims; i++) {
-            (int256 sz,,,,) = engine.positions(btcMkt, addrs[i]);
+            (int256 sz,,,,,) = engine.positions(btcMkt, addrs[i]);
             if (sz != 0) {
                 vm.prank(owner);
                 engine.closePosition(btcMkt, addrs[i], BTC_PRICE);
@@ -959,7 +959,7 @@ contract ChaosTest is Test {
         vm.prank(owner);
         try engine.openPosition(btcMkt, trader, int256(bigSize), 1_000_000 * U) {
             // If it succeeded, verify accounting
-            (int256 sz,, uint256 margin,,) = engine.positions(btcMkt, trader);
+            (int256 sz,, uint256 margin,,,) = engine.positions(btcMkt, trader);
             assertGt(margin, 0, "Position opened with 0 margin");
 
             // Close at same price - should be zero PnL
@@ -1007,12 +1007,12 @@ contract ChaosTest is Test {
 
             // Liquidate everything liquidatable
             for (uint256 i = 0; i < numTraders; i++) {
-                (int256 sz,,,,) = engine.positions(btcMkt, addrs[i]);
+                (int256 sz,,,,,) = engine.positions(btcMkt, addrs[i]);
                 if (sz == 0) continue;
                 if (!engine.isLiquidatable(btcMkt, addrs[i])) continue;
 
                 for (uint256 r = 0; r < 10; r++) {
-                    (sz,,,,) = engine.positions(btcMkt, addrs[i]);
+                    (sz,,,,,) = engine.positions(btcMkt, addrs[i]);
                     if (sz == 0) break;
                     if (!engine.isLiquidatable(btcMkt, addrs[i])) break;
                     vm.prank(keeper);
@@ -1028,7 +1028,7 @@ contract ChaosTest is Test {
         // Count remaining positions
         uint256 surviving = 0;
         for (uint256 i = 0; i < numTraders; i++) {
-            (int256 sz,,,,) = engine.positions(btcMkt, addrs[i]);
+            (int256 sz,,,,,) = engine.positions(btcMkt, addrs[i]);
             if (sz != 0) surviving++;
         }
         emit log_named_uint("  Surviving positions", surviving);
@@ -1114,7 +1114,7 @@ contract ChaosTest is Test {
         // Liquidate in a loop - each round takes 25%
         uint256 rounds = 0;
         for (uint256 r = 0; r < 50; r++) {
-            (int256 sz,,,,) = engine.positions(btcMkt, trader);
+            (int256 sz,,,,,) = engine.positions(btcMkt, trader);
             if (sz == 0) break;
 
             if (engine.isLiquidatable(btcMkt, trader)) {
@@ -1133,7 +1133,7 @@ contract ChaosTest is Test {
         emit log_named_uint("  Liquidation rounds", rounds);
 
         // Position should be fully closed (dust gets full-closed)
-        (int256 finalSz,,,,) = engine.positions(btcMkt, trader);
+        (int256 finalSz,,,,,) = engine.positions(btcMkt, trader);
         emit log_named_int("  Remaining size", finalSz);
 
         (bool healthy, uint256 actual, uint256 accounted) = vault.healthCheck();
@@ -1320,7 +1320,7 @@ contract ChaosTest is Test {
         // Mass liquidation check
         uint256 liqCount = 0;
         for (uint256 i = 0; i < 200; i++) {
-            (int256 sz,,,,) = engine.positions(btcMkt, addrs[i]);
+            (int256 sz,,,,,) = engine.positions(btcMkt, addrs[i]);
             if (sz != 0 && engine.isLiquidatable(btcMkt, addrs[i])) {
                 vm.prank(keeper);
                 try liquidator.liquidate(btcMkt, addrs[i]) { liqCount++; } catch {}
@@ -1367,7 +1367,7 @@ contract ChaosTest is Test {
 
         // Try repeated liquidation
         for (uint256 r = 0; r < 20; r++) {
-            (int256 sz,,,,) = engine.positions(btcMkt, t1);
+            (int256 sz,,,,,) = engine.positions(btcMkt, t1);
             if (sz == 0) break;
             if (!engine.isLiquidatable(btcMkt, t1)) break;
             vm.prank(keeper);
@@ -1414,28 +1414,28 @@ contract ChaosTest is Test {
 
         for (uint256 i = 0; i < numTraders; i += 4) {
             // Trader i: try to reduce position
-            (int256 sz,,,,) = engine.positions(btcMkt, addrs[i]);
+            (int256 sz,,,,,) = engine.positions(btcMkt, addrs[i]);
             if (sz != 0) {
                 vm.prank(owner);
                 try engine.openPosition(btcMkt, addrs[i], -sz / 2, 47_000 * U) {} catch {}
             }
 
             // Trader i+1: try to increase position
-            (sz,,,,) = engine.positions(btcMkt, addrs[i + 1]);
+            (sz,,,,,) = engine.positions(btcMkt, addrs[i + 1]);
             if (sz != 0) {
                 vm.prank(owner);
                 try engine.openPosition(btcMkt, addrs[i + 1], sz, 47_000 * U) {} catch {}
             }
 
             // Trader i+2: try to close entirely
-            (sz,,,,) = engine.positions(btcMkt, addrs[i + 2]);
+            (sz,,,,,) = engine.positions(btcMkt, addrs[i + 2]);
             if (sz != 0) {
                 vm.prank(owner);
                 try engine.closePosition(btcMkt, addrs[i + 2], 47_000 * U) {} catch {}
             }
 
             // Trader i+3: try to liquidate
-            (sz,,,,) = engine.positions(btcMkt, addrs[i + 3]);
+            (sz,,,,,) = engine.positions(btcMkt, addrs[i + 3]);
             if (sz != 0 && engine.isLiquidatable(btcMkt, addrs[i + 3])) {
                 vm.prank(keeper);
                 try liquidator.liquidate(btcMkt, addrs[i + 3]) {} catch {}
@@ -1447,7 +1447,7 @@ contract ChaosTest is Test {
         uint256 actualLong = 0;
         uint256 actualShort = 0;
         for (uint256 i = 0; i < numTraders; i++) {
-            (int256 sz,,,,) = engine.positions(btcMkt, addrs[i]);
+            (int256 sz,,,,,) = engine.positions(btcMkt, addrs[i]);
             if (sz > 0) actualLong += uint256(sz);
             else if (sz < 0) actualShort += uint256(-sz);
         }
@@ -1476,7 +1476,7 @@ contract ChaosTest is Test {
         // Open 1 BTC long
         _trade(0, true, 1, false, btcMkt, S, BTC_PRICE, 1);
 
-        (,, uint256 margin,,) = engine.positions(btcMkt, trader);
+        (,, uint256 margin,,,) = engine.positions(btcMkt, trader);
         emit log_named_uint("  Initial margin", margin / U);
 
         // Binary search for liquidation price
@@ -1504,7 +1504,7 @@ contract ChaosTest is Test {
         vm.prank(owner);
         try engine.openPosition(btcMkt, trader, -2 * int256(S), (liqPrice + 1) * U) {
             // If flip succeeded, check the new position
-            (int256 newSz,, uint256 newMargin,,) = engine.positions(btcMkt, trader);
+            (int256 newSz,, uint256 newMargin,,,) = engine.positions(btcMkt, trader);
             emit log_named_int("  New position size", newSz / int256(S));
             emit log_named_uint("  New margin", newMargin / U);
 
@@ -1612,7 +1612,7 @@ contract ChaosTest is Test {
             // Liquidate until position is gone
             uint256 rounds = 0;
             for (uint256 r = 0; r < 30; r++) {
-                (int256 sz,,,,) = engine.positions(btcMkt, trader);
+                (int256 sz,,,,,) = engine.positions(btcMkt, trader);
                 if (sz == 0) break;
                 if (!engine.isLiquidatable(btcMkt, trader)) {
                     _setPrice(btcMkt, 48_000 - (r * 200));
@@ -1623,7 +1623,7 @@ contract ChaosTest is Test {
                 try liquidator.liquidate(btcMkt, trader) { rounds++; } catch { break; }
             }
 
-            (int256 remaining,,,,) = engine.positions(btcMkt, trader);
+            (int256 remaining,,,,,) = engine.positions(btcMkt, trader);
             if (remaining != 0) totalBadAccounting++;
 
             // Reset price for next iteration
@@ -1674,14 +1674,14 @@ contract ChaosTest is Test {
             }
 
             // Trader i+2: try to liquidate
-            (int256 sz,,,,) = engine.positions(btcMkt, addrs[i + 2]);
+            (int256 sz,,,,,) = engine.positions(btcMkt, addrs[i + 2]);
             if (sz != 0 && engine.isLiquidatable(btcMkt, addrs[i + 2])) {
                 vm.prank(keeper);
                 try liquidator.liquidate(btcMkt, addrs[i + 2]) {} catch {}
             }
 
             // Trader i+3: try to add margin
-            (sz,,,,) = engine.positions(btcMkt, addrs[i + 3]);
+            (sz,,,,,) = engine.positions(btcMkt, addrs[i + 3]);
             if (sz != 0) {
                 uint256 freeBal = vault.balances(addrs[i + 3]);
                 if (freeBal > 0) {
@@ -1725,7 +1725,7 @@ contract ChaosTest is Test {
         }
 
         // Check long trader's position - margin should be eaten by funding
-        (int256 sz,, uint256 margin,,) = engine.positions(btcMkt, longTrader);
+        (int256 sz,, uint256 margin,,,) = engine.positions(btcMkt, longTrader);
         emit log_named_uint("  Long margin after 90 funding periods", margin / U);
         emit log_named_uint("  Long free balance", vault.balances(longTrader) / U);
 
@@ -1734,7 +1734,7 @@ contract ChaosTest is Test {
         vm.prank(owner);
         try engine.openPosition(btcMkt, longTrader, int256(S), BTC_PRICE) {
             emit log_string("  Position increase succeeded after funding debt");
-            (,, uint256 newMargin,,) = engine.positions(btcMkt, longTrader);
+            (,, uint256 newMargin,,,) = engine.positions(btcMkt, longTrader);
             emit log_named_uint("  New margin", newMargin / U);
         } catch {
             emit log_string("  Position increase failed (insufficient margin after funding)");
@@ -1742,7 +1742,7 @@ contract ChaosTest is Test {
 
         // The short should have received a lot of funding
         uint256 shortBal = vault.balances(shortTrader);
-        (,, uint256 shortMargin,,) = engine.positions(btcMkt, shortTrader);
+        (,, uint256 shortMargin,,,) = engine.positions(btcMkt, shortTrader);
         emit log_named_uint("  Short free balance", shortBal / U);
         emit log_named_uint("  Short margin (includes funding)", shortMargin / U);
 
@@ -1806,7 +1806,7 @@ contract ChaosTest is Test {
                 } catch { totalErrors++; }
             } else if (op == 2) {
                 // Close position
-                (int256 sz,,,,) = engine.positions(mkt, trader);
+                (int256 sz,,,,,) = engine.positions(mkt, trader);
                 if (sz != 0) {
                     vm.prank(owner);
                     try engine.closePosition(mkt, trader, _getMarkPrice(mkt)) {
@@ -1829,7 +1829,7 @@ contract ChaosTest is Test {
                 totalOps++;
             } else if (op == 4) {
                 // Liquidate
-                (int256 sz,,,,) = engine.positions(mkt, trader);
+                (int256 sz,,,,,) = engine.positions(mkt, trader);
                 if (sz != 0 && engine.isLiquidatable(mkt, trader)) {
                     vm.prank(keeper);
                     try liquidator.liquidate(mkt, trader) { totalOps++; } catch { totalErrors++; }
@@ -1849,7 +1849,7 @@ contract ChaosTest is Test {
             uint256 actualL = 0;
             uint256 actualS = 0;
             for (uint256 i = 0; i < numTraders; i++) {
-                (int256 sz,,,,) = engine.positions(mkts[m], addrs[i]);
+                (int256 sz,,,,,) = engine.positions(mkts[m], addrs[i]);
                 if (sz > 0) actualL += uint256(sz);
                 else if (sz < 0) actualS += uint256(-sz);
             }
@@ -1907,7 +1907,7 @@ contract ChaosTest is Test {
 
         // Liquidate loser - margin goes to engine pool
         for (uint256 r = 0; r < 10; r++) {
-            (int256 sz,,,,) = engine2.positions(btc2, loser);
+            (int256 sz,,,,,) = engine2.positions(btc2, loser);
             if (sz == 0) break;
             if (!engine2.isLiquidatable(btc2, loser)) break;
             vm.prank(keeper);
@@ -2100,13 +2100,13 @@ contract ChaosTest is Test {
         uint256 primeSize = 997; // prime number of SIZE_PRECISION units
         _trade(0, true, 1, false, btcMkt, primeSize, BTC_PRICE, 1);
 
-        (,, uint256 initialMargin,,) = engine.positions(btcMkt, trader);
+        (,, uint256 initialMargin,,,) = engine.positions(btcMkt, trader);
         emit log_named_uint("  Initial margin", initialMargin);
 
         // Close in small increments that cause maximum rounding
         uint256 totalReleased = 0;
         for (uint256 i = 0; i < 30; i++) {
-            (int256 sz,,,,) = engine.positions(btcMkt, trader);
+            (int256 sz,,,,,) = engine.positions(btcMkt, trader);
             if (sz == 0) break;
             uint256 absSize = uint256(sz);
             uint256 closeSize = absSize > 3 ? 3 : absSize; // close 3 units at a time
@@ -2116,14 +2116,14 @@ contract ChaosTest is Test {
         }
 
         // Close remainder
-        (int256 finalSz,,,,) = engine.positions(btcMkt, trader);
+        (int256 finalSz,,,,,) = engine.positions(btcMkt, trader);
         if (finalSz != 0) {
             vm.prank(owner);
             engine.closePosition(btcMkt, trader, BTC_PRICE);
         }
 
         // Close counterparty too so engine balance reflects only dust
-        (int256 cpSz,,,,) = engine.positions(btcMkt, cp);
+        (int256 cpSz,,,,,) = engine.positions(btcMkt, cp);
         if (cpSz != 0) {
             vm.prank(owner);
             engine.closePosition(btcMkt, cp, BTC_PRICE);
@@ -2172,7 +2172,7 @@ contract ChaosTest is Test {
         uint256 closedCount = 0;
         uint256 failedCount = 0;
         for (uint256 i = 0; i < pairs; i++) {
-            (int256 sz,,,,) = engine.positions(btcMkt, addrs[i]);
+            (int256 sz,,,,,) = engine.positions(btcMkt, addrs[i]);
             if (sz != 0) {
                 vm.prank(owner);
                 try engine.closePosition(btcMkt, addrs[i], 65_000 * U) {
@@ -2219,7 +2219,7 @@ contract ChaosTest is Test {
         vm.prank(owner);
         engine.addMargin(btcMkt, trader, 20_000 * U);
 
-        (,, uint256 marginBefore,,) = engine.positions(btcMkt, trader);
+        (,, uint256 marginBefore,,,) = engine.positions(btcMkt, trader);
         emit log_named_uint("  Margin after adding extra", marginBefore / U);
 
         // Remove margin down to just above maintenance
@@ -2227,7 +2227,7 @@ contract ChaosTest is Test {
         vm.prank(owner);
         engine.removeMargin(btcMkt, trader, 19_000 * U);
 
-        (,, uint256 marginAfter,,) = engine.positions(btcMkt, trader);
+        (,, uint256 marginAfter,,,) = engine.positions(btcMkt, trader);
         emit log_named_uint("  Margin after removal", marginAfter / U);
 
         // Set funding to eat remaining margin
@@ -2444,14 +2444,14 @@ contract ChaosTest is Test {
         engine.applyFundingRate(btcMkt);
 
         // Record margin before addMargin
-        (,, uint256 marginBefore,,) = engine.positions(btcMkt, longTrader);
+        (,, uint256 marginBefore,,,) = engine.positions(btcMkt, longTrader);
         emit log_named_uint("  Long margin before addMargin", marginBefore);
 
         // Long trader adds margin WITHOUT funding being applied
         vm.prank(owner);
         engine.addMargin(btcMkt, longTrader, 5_000 * U);
 
-        (,, uint256 marginAfterAdd,,) = engine.positions(btcMkt, longTrader);
+        (,, uint256 marginAfterAdd,,,) = engine.positions(btcMkt, longTrader);
         emit log_named_uint("  Long margin after addMargin (funding NOT applied)", marginAfterAdd);
 
         // Now close position — this WILL apply funding
@@ -2493,7 +2493,7 @@ contract ChaosTest is Test {
         // Open positions
         _trade(0, true, 1, false, btcMkt, S, BTC_PRICE, 1);
 
-        (,, uint256 initialMargin,,) = engine.positions(btcMkt, longTrader);
+        (,, uint256 initialMargin,,,) = engine.positions(btcMkt, longTrader);
         emit log_named_uint("  Initial margin", initialMargin);
 
         // Remove as much margin as allowed
@@ -2605,7 +2605,7 @@ contract ChaosTest is Test {
         // Open long
         _trade(0, true, 1, false, btcMkt, S, BTC_PRICE, 1);
 
-        (int256 longSz,, uint256 longMargin,,) = engine.positions(btcMkt, trader);
+        (int256 longSz,, uint256 longMargin,,,) = engine.positions(btcMkt, trader);
         uint256 balBefore = vault.balances(trader);
         emit log_named_int("  Long size", longSz);
         emit log_named_uint("  Long margin", longMargin);
@@ -2618,7 +2618,7 @@ contract ChaosTest is Test {
         vm.prank(owner);
         engine.openPosition(btcMkt, trader, -2 * int256(S), 55_000 * U);
 
-        (int256 shortSz, uint256 entryPrice, uint256 shortMargin,,) = engine.positions(btcMkt, trader);
+        (int256 shortSz, uint256 entryPrice, uint256 shortMargin,,,) = engine.positions(btcMkt, trader);
         uint256 balAfter = vault.balances(trader);
         emit log_named_int("  Short size after flip", shortSz);
         emit log_named_uint("  Short entry price", entryPrice);
@@ -2789,7 +2789,7 @@ contract ChaosTest is Test {
         vm.prank(owner);
         engine.updateMarkPrice(btcMkt, 50_001 * U, 50_000 * U);
 
-        (,, uint256 marginBefore,,) = engine.positions(btcMkt, longTrader);
+        (,, uint256 marginBefore,,,) = engine.positions(btcMkt, longTrader);
 
         // Apply funding many times (update price each round to avoid StalePrice)
         uint256 fundingRounds = 24; // 24 hours
@@ -2806,7 +2806,7 @@ contract ChaosTest is Test {
         vm.prank(owner);
         engine.closePosition(btcMkt, longTrader, BTC_PRICE);
 
-        (,, uint256 marginAfter,,) = engine.positions(btcMkt, longTrader);
+        (,, uint256 marginAfter,,,) = engine.positions(btcMkt, longTrader);
         uint256 longBal = vault.balances(longTrader);
         uint256 shortBal = vault.balances(shortTrader);
 
@@ -2862,7 +2862,7 @@ contract ChaosTest is Test {
         vm.warp(block.timestamp + 2 hours);
 
         // Try to remove margin based on stale high equity
-        (,, uint256 posMargin,,) = engine.positions(btcMkt, trader);
+        (,, uint256 posMargin,,,) = engine.positions(btcMkt, trader);
         uint256 removeAmt = posMargin / 2;
         vm.prank(owner);
         try engine.removeMargin(btcMkt, trader, removeAmt) {
@@ -2982,13 +2982,13 @@ contract ChaosTest is Test {
         uint256 closeFails = 0;
         for (uint256 i = 0; i < 10; i++) {
             // Close BTC position
-            (int256 btcSz,,,,) = engine.positions(btcMkt, addrs[i]);
+            (int256 btcSz,,,,,) = engine.positions(btcMkt, addrs[i]);
             if (btcSz != 0) {
                 vm.prank(owner);
                 try engine.closePosition(btcMkt, addrs[i], 70_000 * U) {} catch { closeFails++; }
             }
             // Close ETH position
-            (int256 ethSz,,,,) = engine.positions(ethMkt, addrs[i]);
+            (int256 ethSz,,,,,) = engine.positions(ethMkt, addrs[i]);
             if (ethSz != 0) {
                 vm.prank(owner);
                 try engine.closePosition(ethMkt, addrs[i], 2_000 * U) {} catch { closeFails++; }
@@ -3031,7 +3031,7 @@ contract ChaosTest is Test {
         engine.applyFundingRate(btcMkt);
 
         // Get margin before any funding application
-        (,, uint256 marginBefore,,) = engine.positions(btcMkt, longTrader);
+        (,, uint256 marginBefore,,,) = engine.positions(btcMkt, longTrader);
 
         // Refresh price after warp to avoid StalePrice
         _setPrice(btcMkt, 50_000);
@@ -3041,7 +3041,7 @@ contract ChaosTest is Test {
         vm.prank(owner);
         engine.openPosition(btcMkt, longTrader, int256(S / 10), BTC_PRICE);
 
-        (,, uint256 marginAfterIncrease,,) = engine.positions(btcMkt, longTrader);
+        (,, uint256 marginAfterIncrease,,,) = engine.positions(btcMkt, longTrader);
 
         // Immediately close — triggers _applyFunding again
         vm.prank(owner);
@@ -3171,7 +3171,7 @@ contract ChaosTest is Test {
         _trade(0, true, 1, false, btcMkt, S, BTC_PRICE, 1);
 
         // Remove margin to minimum
-        (,, uint256 margin,,) = engine.positions(btcMkt, longTrader);
+        (,, uint256 margin,,,) = engine.positions(btcMkt, longTrader);
         // Try removing 70% of margin
         uint256 removeAmt = (margin * 70) / 100;
         vm.prank(owner);
@@ -3263,12 +3263,12 @@ contract ChaosTest is Test {
         _setPrice(btcMkt, 35_000);
         _setPrice(ethMkt, 2_500);
         for (uint256 i = 0; i < 15; i++) {
-            (int256 btcSz,,,,) = engine.positions(btcMkt, addrs[i]);
+            (int256 btcSz,,,,,) = engine.positions(btcMkt, addrs[i]);
             if (btcSz != 0) {
                 vm.prank(owner);
                 try engine.closePosition(btcMkt, addrs[i], 35_000 * U) {} catch {}
             }
-            (int256 ethSz,,,,) = engine.positions(ethMkt, addrs[i]);
+            (int256 ethSz,,,,,) = engine.positions(ethMkt, addrs[i]);
             if (ethSz != 0) {
                 vm.prank(owner);
                 try engine.closePosition(ethMkt, addrs[i], 2_500 * U) {} catch {}

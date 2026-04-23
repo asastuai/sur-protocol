@@ -115,7 +115,7 @@ contract InvariantHandler is Test {
     /// @notice Close a position (reduce to zero)
     function closePosition(uint256 actorSeed) external {
         address actor = _getActor(actorSeed);
-        (int256 size,,,,) = engine.positions(btcMarket, actor);
+        (int256 size,,,,,) = engine.positions(btcMarket, actor);
         if (size == 0) return;
 
         // Opposite sizeDelta to close

@@ -111,7 +111,7 @@ contract MEVProtectionTest is Test {
         settlement.settleOne(trade);
         vm.stopPrank();
 
-        (int256 size,,,,) = engine.positions(btcMarket, alice);
+        (int256 size,,,,,) = engine.positions(btcMarket, alice);
         assertEq(size, int256(SIZE_UNIT));
     }
 
@@ -170,7 +170,7 @@ contract MEVProtectionTest is Test {
         vm.prank(owner);
         settlement.settleOne(trade);
 
-        (int256 size,,,,) = engine.positions(btcMarket, alice);
+        (int256 size,,,,,) = engine.positions(btcMarket, alice);
         assertEq(size, int256(SIZE_UNIT));
     }
 
@@ -218,7 +218,7 @@ contract MEVProtectionTest is Test {
         vm.prank(owner);
         settlement.settleOne(trade);
 
-        (int256 size,,,,) = engine.positions(btcMarket, alice);
+        (int256 size,,,,,) = engine.positions(btcMarket, alice);
         assertEq(size, int256(SIZE_UNIT));
     }
 
@@ -344,7 +344,7 @@ contract MEVProtectionTest is Test {
         vm.prank(owner);
         settlement.settleOne(trade);
 
-        (int256 size,,,,) = engine.positions(btcMarket, alice);
+        (int256 size,,,,,) = engine.positions(btcMarket, alice);
         assertEq(size, int256(SIZE_UNIT),
             "Order committed under delay=2s MUST settle after 3s even when current delay=30s");
     }

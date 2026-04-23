@@ -132,8 +132,8 @@ contract CrossMarginTest is Test {
         engine.openPosition(ethMarket, alice, -int256(10 * SIZE), ETH_PRICE);
 
         // Verify both positions exist
-        (int256 btcSize,,,,) = engine.positions(btcMarket, alice);
-        (int256 ethSize,,,,) = engine.positions(ethMarket, alice);
+        (int256 btcSize,,,,,) = engine.positions(btcMarket, alice);
+        (int256 ethSize,,,,,) = engine.positions(ethMarket, alice);
         assertEq(btcSize, int256(1 * SIZE));
         assertEq(ethSize, -int256(10 * SIZE));
 
@@ -271,7 +271,7 @@ contract CrossMarginTest is Test {
         liquidator.liquidateAccount(bob);
 
         // Bob's positions should all be gone
-        (int256 bobBtcSize,,,,) = engine.positions(btcMarket, bob);
+        (int256 bobBtcSize,,,,,) = engine.positions(btcMarket, bob);
         assertEq(bobBtcSize, 0, "Bob's BTC position should be closed");
         assertEq(engine.getActiveMarketCount(bob), 0, "Bob should have no active markets");
 

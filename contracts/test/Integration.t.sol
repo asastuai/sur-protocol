@@ -207,9 +207,9 @@ contract IntegrationTest is Test {
         settlement.settleOne(trade);
 
         // Verify positions
-        (int256 aliceSize, uint256 aliceEntry, uint256 aliceMargin,,) =
+        (int256 aliceSize, uint256 aliceEntry, uint256 aliceMargin,,,) =
             engine.positions(btcMarket, alice);
-        (int256 bobSize, uint256 bobEntry, uint256 bobMargin,,) =
+        (int256 bobSize, uint256 bobEntry, uint256 bobMargin,,,) =
             engine.positions(btcMarket, bob);
 
         assertEq(aliceSize, int256(SIZE_UNIT), "Alice should be 1 BTC long");
@@ -268,7 +268,7 @@ contract IntegrationTest is Test {
         // threshold (SIZE_PRECISION/100 = 1e6) takes ~18 rounds from 1e8.
         uint256 rounds;
         while (true) {
-            (bobSize,,,,) = engine.positions(btcMarket, bob);
+            (bobSize,,,,,) = engine.positions(btcMarket, bob);
             if (bobSize == 0) break;
             if (!engine.isLiquidatable(btcMarket, bob)) break;
             vm.prank(keeper);
@@ -278,7 +278,7 @@ contract IntegrationTest is Test {
         }
 
         // Bob's position should be gone
-        (bobSize,,,,) = engine.positions(btcMarket, bob);
+        (bobSize,,,,,) = engine.positions(btcMarket, bob);
         assertEq(bobSize, 0, "Bob position should be closed");
 
         // Keeper earned a reward
@@ -318,7 +318,7 @@ contract IntegrationTest is Test {
         settlement.settleOne(closeTrade);
 
         // Alice's position should be closed (her short cancels her long)
-        (aliceSize,,,,) = engine.positions(btcMarket, alice);
+        (aliceSize,,,,,) = engine.positions(btcMarket, alice);
         assertEq(aliceSize, 0, "Alice position should be closed");
 
         // Alice should have made money
@@ -422,7 +422,7 @@ contract IntegrationTest is Test {
             executionSize: 1 * SIZE_UNIT
         }));
 
-        (int256 size,, uint256 margin,,) = engine.positions(btcMarket, alice);
+        (int256 size,, uint256 margin,,,) = engine.positions(btcMarket, alice);
         assertEq(size, int256(SIZE_UNIT));
         // Margin = $52,000 * 5% = $2,600
         assertEq(margin, 2_600 * USDC_UNIT);
@@ -460,7 +460,7 @@ contract IntegrationTest is Test {
         assertEq(liquidator.totalLiquidations(), 2);
 
         // Bob still has his position
-        (int256 bobSize,,,,) = engine.positions(btcMarket, bob);
+        (int256 bobSize,,,,,) = engine.positions(btcMarket, bob);
         assertEq(bobSize, -int256(2 * SIZE_UNIT));
 
         _verifyGlobalInvariants();

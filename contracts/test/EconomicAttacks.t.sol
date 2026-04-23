@@ -153,7 +153,7 @@ contract EconomicAttacks is Test {
         engine.updateMarkPrice(btcMkt, 10_000 * U, 10_000 * U);
 
         for (uint256 i = 0; i < 4; i++) {
-            (int256 size,,,,) = engine.positions(btcMkt, longs[i]);
+            (int256 size,,,,,) = engine.positions(btcMkt, longs[i]);
             if (size != 0 && engine.isLiquidatable(btcMkt, longs[i])) {
                 vm.prank(keeper);
                 try liquidator.liquidate(btcMkt, longs[i]) {
@@ -168,7 +168,7 @@ contract EconomicAttacks is Test {
         engine.updateMarkPrice(btcMkt, 5_000 * U, 5_000 * U);
 
         for (uint256 i = 0; i < 4; i++) {
-            (int256 size,,,,) = engine.positions(btcMkt, longs[i]);
+            (int256 size,,,,,) = engine.positions(btcMkt, longs[i]);
             if (size != 0 && engine.isLiquidatable(btcMkt, longs[i])) {
                 vm.prank(keeper);
                 try liquidator.liquidate(btcMkt, longs[i]) {
@@ -189,7 +189,7 @@ contract EconomicAttacks is Test {
             int256 whalePnl = engine.getUnrealizedPnl(btcMkt, whale);
             emit log_string(string.concat("  Whale PnL: $", vm.toString(uint256(whalePnl) / U)));
 
-            (int256 whaleSize,,,,) = engine.positions(btcMkt, whale);
+            (int256 whaleSize,,,,,) = engine.positions(btcMkt, whale);
             if (whaleSize != 0 && whalePnl > 0) {
                 uint256 absSize = uint256(-whaleSize);
                 vm.prank(keeper);
@@ -308,8 +308,8 @@ contract EconomicAttacks is Test {
         darkpool.acceptAndSettle(intentId, respId);
 
         // Verify positions
-        (int256 eveSize,,,,) = engine.positions(btcMkt, eve);
-        (int256 aliceSize,,,,) = engine.positions(btcMkt, alice);
+        (int256 eveSize,,,,,) = engine.positions(btcMkt, eve);
+        (int256 aliceSize,,,,,) = engine.positions(btcMkt, alice);
         assertEq(eveSize, int256(1 * S), "Eve should be long 1 BTC");
         assertEq(aliceSize, -int256(1 * S), "Alice should be short 1 BTC");
 
@@ -465,8 +465,8 @@ contract EconomicAttacks is Test {
         assertGe(actualUsdc, totalDeposits, "CRITICAL: Vault insolvent after bank run");
 
         // Positions should still be open for those who couldn't fully withdraw
-        (int256 aliceSize,,,,) = engine.positions(btcMkt, alice);
-        (int256 bobSize,,,,) = engine.positions(btcMkt, bob);
+        (int256 aliceSize,,,,,) = engine.positions(btcMkt, alice);
+        (int256 bobSize,,,,,) = engine.positions(btcMkt, bob);
         emit log_string(string.concat("  Alice position still open: ", aliceSize != 0 ? "YES" : "NO"));
         emit log_string(string.concat("  Bob position still open: ", bobSize != 0 ? "YES" : "NO"));
 
@@ -497,7 +497,7 @@ contract EconomicAttacks is Test {
         // Liquidate shorts
         address[2] memory shorts = [bob, dave];
         for (uint256 i = 0; i < 2; i++) {
-            (int256 size,,,,) = engine.positions(btcMkt, shorts[i]);
+            (int256 size,,,,,) = engine.positions(btcMkt, shorts[i]);
             if (size != 0 && engine.isLiquidatable(btcMkt, shorts[i])) {
                 vm.prank(keeper);
                 try liquidator.liquidate(btcMkt, shorts[i]) {
@@ -514,7 +514,7 @@ contract EconomicAttacks is Test {
         // Liquidate longs
         address[2] memory longs = [alice, charlie];
         for (uint256 i = 0; i < 2; i++) {
-            (int256 size,,,,) = engine.positions(btcMkt, longs[i]);
+            (int256 size,,,,,) = engine.positions(btcMkt, longs[i]);
             if (size != 0 && engine.isLiquidatable(btcMkt, longs[i])) {
                 vm.prank(keeper);
                 try liquidator.liquidate(btcMkt, longs[i]) {
@@ -581,14 +581,14 @@ contract EconomicAttacks is Test {
         // Try liquidations across markets
         address[4] memory traders = [alice, bob, charlie, dave];
         for (uint256 i = 0; i < 4; i++) {
-            (int256 btcSize,,,,) = engine.positions(btcMkt, traders[i]);
+            (int256 btcSize,,,,,) = engine.positions(btcMkt, traders[i]);
             if (btcSize != 0 && engine.isLiquidatable(btcMkt, traders[i])) {
                 vm.prank(keeper);
                 try liquidator.liquidate(btcMkt, traders[i]) {
                     emit log_string(string.concat("  Liquidated BTC position for trader ", vm.toString(i)));
                 } catch {}
             }
-            (int256 ethSize,,,,) = engine.positions(ethMkt, traders[i]);
+            (int256 ethSize,,,,,) = engine.positions(ethMkt, traders[i]);
             if (ethSize != 0 && engine.isLiquidatable(ethMkt, traders[i])) {
                 vm.prank(keeper);
                 try liquidator.liquidate(ethMkt, traders[i]) {
@@ -633,7 +633,7 @@ contract EconomicAttacks is Test {
         // Liquidate all longs
         address[3] memory longs = [alice, bob, charlie];
         for (uint256 i = 0; i < 3; i++) {
-            (int256 size,,,,) = engine.positions(btcMkt, longs[i]);
+            (int256 size,,,,,) = engine.positions(btcMkt, longs[i]);
             if (size != 0 && engine.isLiquidatable(btcMkt, longs[i])) {
                 vm.prank(keeper);
                 try liquidator.liquidate(btcMkt, longs[i]) {} catch {}
@@ -651,14 +651,14 @@ contract EconomicAttacks is Test {
         if (adlNeeded) {
             int256 whalePnl = engine.getUnrealizedPnl(btcMkt, whale);
             if (whalePnl > 0) {
-                (int256 whaleSize,,,,) = engine.positions(btcMkt, whale);
+                (int256 whaleSize,,,,,) = engine.positions(btcMkt, whale);
                 uint256 absSize = uint256(-whaleSize);
                 vm.prank(keeper);
                 try adl.executeADL(btcMkt, whale, absSize / 4, 15_000 * U, insuranceAfterLiqs + 2000 * U) {
                     emit log_string("  ADL executed on whale (25% reduction)");
 
                     // Verify whale position was reduced
-                    (int256 newSize,,,,) = engine.positions(btcMkt, whale);
+                    (int256 newSize,,,,,) = engine.positions(btcMkt, whale);
                     assertTrue(
                         uint256(-newSize) < absSize,
                         "Whale position should be smaller after ADL"
@@ -859,7 +859,7 @@ contract EconomicAttacks is Test {
         }
 
         // Bob takes the other side
-        (int256 aliceSize,,,,) = engine.positions(btcMkt, alice);
+        (int256 aliceSize,,,,,) = engine.positions(btcMkt, alice);
         vm.prank(owner);
         engine.openPosition(btcMkt, bob, -aliceSize, 50_000 * U);
 

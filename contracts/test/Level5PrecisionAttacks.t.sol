@@ -161,8 +161,8 @@ contract Level5PrecisionAttacks is Test {
         emit log_string(string.concat("  Funding pool after: $", vm.toString(fpAfter / U)));
 
         // Check margin changes (funding goes through margin)
-        (,, uint256 aliceMargin,,) = engine.positions(btcMkt, alice);
-        (,, uint256 bobMargin,,) = engine.positions(btcMkt, bob);
+        (,, uint256 aliceMargin,,,) = engine.positions(btcMkt, alice);
+        (,, uint256 bobMargin,,,) = engine.positions(btcMkt, bob);
         emit log_string(string.concat("  Alice margin (long, should decrease): $", vm.toString(aliceMargin / U)));
         emit log_string(string.concat("  Bob margin (short, should increase): $", vm.toString(bobMargin / U)));
 
@@ -345,7 +345,7 @@ contract Level5PrecisionAttacks is Test {
             emit log_string("  1-unit position opened");
 
             // Check margin locked
-            (int256 size, uint256 entry, uint256 margin,,) = engine.positions(btcMkt, eve);
+            (int256 size, uint256 entry, uint256 margin,,,) = engine.positions(btcMkt, eve);
             emit log_string(string.concat("  Size: ", vm.toString(uint256(size))));
             emit log_string(string.concat("  Entry: ", vm.toString(entry)));
             emit log_string(string.concat("  Margin: ", vm.toString(margin)));
@@ -510,7 +510,7 @@ contract Level5PrecisionAttacks is Test {
         engine.openPosition(btcMkt, bob, -int256(1 * S), 50_000 * U);
         vm.stopPrank();
 
-        (,, uint256 margin,,) = engine.positions(btcMkt, alice);
+        (,, uint256 margin,,,) = engine.positions(btcMkt, alice);
         emit log_string(string.concat("  Alice margin: $", vm.toString(margin / U)));
 
         // At $50k: notional=$50k, maintenance=2.5%=$1,250
@@ -564,7 +564,7 @@ contract Level5PrecisionAttacks is Test {
         vm.stopPrank();
 
         uint256 aliceBefore = vault.balances(alice);
-        (int256 sizeBefore,, uint256 marginBefore,,) = engine.positions(btcMkt, alice);
+        (int256 sizeBefore,, uint256 marginBefore,,,) = engine.positions(btcMkt, alice);
         emit log_string(string.concat("  Before flip - size: ", vm.toString(uint256(sizeBefore) / S), " BTC"));
         emit log_string(string.concat("  Before flip - margin: $", vm.toString(marginBefore / U)));
 
@@ -576,7 +576,7 @@ contract Level5PrecisionAttacks is Test {
         vm.prank(owner);
         engine.openPosition(btcMkt, alice, -int256(10 * S), 55_000 * U);
 
-        (int256 sizeAfter, uint256 entryAfter, uint256 marginAfter,,) = engine.positions(btcMkt, alice);
+        (int256 sizeAfter, uint256 entryAfter, uint256 marginAfter,,,) = engine.positions(btcMkt, alice);
         uint256 aliceAfter = vault.balances(alice);
 
         emit log_string(string.concat("  After flip - size: -", vm.toString(uint256(-sizeAfter) / S), " BTC"));
@@ -614,7 +614,7 @@ contract Level5PrecisionAttacks is Test {
         vm.stopPrank();
 
         // Verify position exists
-        (int256 size,, uint256 margin,,) = engine.positions(btcMkt, alice);
+        (int256 size,, uint256 margin,,,) = engine.positions(btcMkt, alice);
         assertTrue(size != 0, "Position should exist");
         emit log_string(string.concat("  Margin locked: $", vm.toString(margin / U)));
 
@@ -623,7 +623,7 @@ contract Level5PrecisionAttacks is Test {
         engine.openPosition(btcMkt, alice, -int256(1 * S), 50_000 * U);
 
         // Verify position is gone
-        (int256 sizeAfter,, uint256 marginAfter,,) = engine.positions(btcMkt, alice);
+        (int256 sizeAfter,, uint256 marginAfter,,,) = engine.positions(btcMkt, alice);
         assertEq(sizeAfter, 0, "Position should be closed");
         assertEq(marginAfter, 0, "No margin dust should remain");
 
@@ -675,7 +675,7 @@ contract Level5PrecisionAttacks is Test {
 
         address[4] memory traders = [alice, bob, charlie, eve];
         for (uint256 i = 0; i < 4; i++) {
-            (int256 sz,,,,) = engine.positions(btcMkt, traders[i]);
+            (int256 sz,,,,,) = engine.positions(btcMkt, traders[i]);
             if (sz > 0) expectedLong += uint256(sz);
             else if (sz < 0) expectedShort += uint256(-sz);
         }
@@ -708,7 +708,7 @@ contract Level5PrecisionAttacks is Test {
 
         // Snapshot ETH state
         (,,,,,,,,,,,, uint256 ethOiLongBefore, uint256 ethOiShortBefore) = engine.markets(ethMkt);
-        (int256 charlieSize,,,,) = engine.positions(ethMkt, charlie);
+        (int256 charlieSize,,,,,) = engine.positions(ethMkt, charlie);
 
         // Massive BTC operations - smaller crash to avoid circuit breaker
         vm.startPrank(owner);
@@ -722,7 +722,7 @@ contract Level5PrecisionAttacks is Test {
 
         // ETH state should be completely unchanged
         (,,,,,,,,,,,, uint256 ethOiLongAfter, uint256 ethOiShortAfter) = engine.markets(ethMkt);
-        (int256 charlieSizeAfter,,,,) = engine.positions(ethMkt, charlie);
+        (int256 charlieSizeAfter,,,,,) = engine.positions(ethMkt, charlie);
 
         assertEq(ethOiLongAfter, ethOiLongBefore, "ETH OI Long changed by BTC operations!");
         assertEq(ethOiShortAfter, ethOiShortBefore, "ETH OI Short changed by BTC operations!");
@@ -745,7 +745,7 @@ contract Level5PrecisionAttacks is Test {
         engine.openPosition(btcMkt, bob, -int256(2 * S), 50_000 * U);
         vm.stopPrank();
 
-        (int256 sz1, uint256 entry1,,,) = engine.positions(btcMkt, alice);
+        (int256 sz1, uint256 entry1,,,,) = engine.positions(btcMkt, alice);
         assertEq(entry1, 50_000 * U, "Initial entry should be $50k");
 
         // Price moves to $60k
@@ -758,7 +758,7 @@ contract Level5PrecisionAttacks is Test {
         engine.openPosition(btcMkt, bob, -int256(3 * S), 60_000 * U);
         vm.stopPrank();
 
-        (int256 sz2, uint256 entry2,,,) = engine.positions(btcMkt, alice);
+        (int256 sz2, uint256 entry2,,,,) = engine.positions(btcMkt, alice);
         assertEq(sz2, int256(5 * S), "Should have 5 BTC total");
 
         // Expected weighted average: (2*50000 + 3*60000) / 5 = 280000/5 = $56,000

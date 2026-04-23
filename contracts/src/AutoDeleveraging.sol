@@ -153,7 +153,7 @@ contract AutoDeleveraging {
         }
 
         // Get position — must exist and be profitable
-        (int256 size,,,,) = engine.positions(marketId, trader);
+        (int256 size,,,,,) = engine.positions(marketId, trader);
         if (size == 0) revert NoPosition(marketId, trader);
 
         int256 unrealizedPnl = engine.getUnrealizedPnl(marketId, trader);
@@ -204,7 +204,7 @@ contract AutoDeleveraging {
         uint256 badDebtPerTrader = totalBadDebt / traders.length;
 
         for (uint256 i = 0; i < traders.length;) {
-            (int256 size,,,,) = engine.positions(marketId, traders[i]);
+            (int256 size,,,,,) = engine.positions(marketId, traders[i]);
             if (size != 0) {
                 int256 pnl = engine.getUnrealizedPnl(marketId, traders[i]);
                 if (pnl > 0) {

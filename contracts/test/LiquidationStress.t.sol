@@ -171,7 +171,7 @@ contract LiquidationStressTest is Test {
 
     function _fullyLiquidate(bytes32 marketId, address trader) internal returns (uint256 rounds) {
         while (true) {
-            (int256 size,,,,) = engine.positions(marketId, trader);
+            (int256 size,,,,,) = engine.positions(marketId, trader);
             if (size == 0) break;
             if (!engine.isLiquidatable(marketId, trader)) break;
             vm.prank(keeper);
@@ -217,7 +217,7 @@ contract LiquidationStressTest is Test {
         }
 
         for (uint256 i = 0; i < 12; i++) {
-            (int256 sz,,,,) = engine.positions(btcMarket, traders[i]);
+            (int256 sz,,,,,) = engine.positions(btcMarket, traders[i]);
             assertGt(sz, 0, "Position should be open");
         }
 
@@ -239,7 +239,7 @@ contract LiquidationStressTest is Test {
         }
 
         for (uint256 i = 0; i < 12; i++) {
-            (int256 sz,,,,) = engine.positions(btcMarket, traders[i]);
+            (int256 sz,,,,,) = engine.positions(btcMarket, traders[i]);
             assertEq(sz, 0, string.concat("Trader ", vm.toString(i), " should be fully liquidated"));
         }
 
@@ -264,7 +264,7 @@ contract LiquidationStressTest is Test {
 
         _openPosition(ethMarket, trader, int256(10 * SIZE_UNIT), ethPrice);
 
-        (int256 sz,, uint256 margin,,) = engine.positions(ethMarket, trader);
+        (int256 sz,, uint256 margin,,,) = engine.positions(ethMarket, trader);
         assertEq(sz, int256(10 * SIZE_UNIT), "Should hold 10 ETH long");
         assertEq(margin, 600 * USDC_UNIT, "Margin should be $600 at 50x");
 
@@ -273,13 +273,13 @@ contract LiquidationStressTest is Test {
 
         assertTrue(engine.isLiquidatable(ethMarket, trader), "Should be liquidatable after tiny move");
 
-        (int256 sizeBefore,,,,) = engine.positions(ethMarket, trader);
+        (int256 sizeBefore,,,,,) = engine.positions(ethMarket, trader);
         uint256 absBefore = uint256(sizeBefore);
 
         vm.prank(keeper);
         liquidator.liquidate(ethMarket, trader);
 
-        (int256 sizeAfter,,,,) = engine.positions(ethMarket, trader);
+        (int256 sizeAfter,,,,,) = engine.positions(ethMarket, trader);
         assertEq(
             uint256(sizeAfter),
             absBefore - absBefore / 4,
@@ -288,7 +288,7 @@ contract LiquidationStressTest is Test {
 
         uint256 totalRounds = 1;
         while (true) {
-            (int256 s,,,,) = engine.positions(ethMarket, trader);
+            (int256 s,,,,,) = engine.positions(ethMarket, trader);
             if (s == 0) break;
             if (!engine.isLiquidatable(ethMarket, trader)) break;
             vm.prank(keeper);
@@ -297,7 +297,7 @@ contract LiquidationStressTest is Test {
             require(totalRounds <= 30, "Too many rounds");
         }
 
-        (int256 finalSize,,,,) = engine.positions(ethMarket, trader);
+        (int256 finalSize,,,,,) = engine.positions(ethMarket, trader);
         assertEq(finalSize, 0, "Position should be fully closed");
 
         emit log_named_uint("  Rounds to fully liquidate 50x position", totalRounds);
@@ -340,7 +340,7 @@ contract LiquidationStressTest is Test {
         _updatePrice(btcMarket, 42_000);
 
         for (uint256 i = 0; i < 4; i++) {
-            (int256 sz,,,,) = engine.positions(btcMarket, traders[i]);
+            (int256 sz,,,,,) = engine.positions(btcMarket, traders[i]);
             if (sz != 0) {
                 assertTrue(
                     engine.isLiquidatable(btcMarket, traders[i]),
@@ -361,12 +361,12 @@ contract LiquidationStressTest is Test {
         }
 
         for (uint256 i = 0; i < 4; i++) {
-            (int256 sz,,,,) = engine.positions(btcMarket, traders[i]);
+            (int256 sz,,,,,) = engine.positions(btcMarket, traders[i]);
             assertEq(sz, 0, "Long should be fully closed after oscillation");
         }
 
         for (uint256 i = 4; i < 8; i++) {
-            (int256 sz,,,,) = engine.positions(btcMarket, traders[i]);
+            (int256 sz,,,,,) = engine.positions(btcMarket, traders[i]);
             assertEq(sz, -int256(2 * SIZE_UNIT), "Shorts should be untouched");
         }
 
@@ -432,7 +432,7 @@ contract LiquidationStressTest is Test {
         }
 
         for (uint256 i = 0; i < numLongs; i++) {
-            (int256 sz,,,,) = engine.positions(btcMarket, traders[i]);
+            (int256 sz,,,,,) = engine.positions(btcMarket, traders[i]);
             assertEq(sz, 0, "Long position should be fully closed");
         }
 
@@ -447,7 +447,7 @@ contract LiquidationStressTest is Test {
         emit log_named_uint("  Follow-up rounds", totalRoundsAfterBatch);
 
         for (uint256 i = 0; i < numShorts; i++) {
-            (int256 sz,,,,) = engine.positions(btcMarket, traders[numLongs + i]);
+            (int256 sz,,,,,) = engine.positions(btcMarket, traders[numLongs + i]);
             assertEq(sz, -int256((i + 1) * SIZE_UNIT), "Short position should be untouched");
         }
 
@@ -469,7 +469,7 @@ contract LiquidationStressTest is Test {
         address trader = traders[0];
         _openPosition(btcMarket, trader, int256(SIZE_UNIT), BTC_50K);
 
-        (int256 sz,, uint256 margin,,) = engine.positions(btcMarket, trader);
+        (int256 sz,, uint256 margin,,,) = engine.positions(btcMarket, trader);
         assertEq(sz, int256(SIZE_UNIT));
         assertEq(margin, 2_500 * USDC_UNIT);
 
@@ -491,7 +491,7 @@ contract LiquidationStressTest is Test {
         vm.prank(keeper);
         liquidator.liquidate(btcMarket, trader);
 
-        (int256 sizeAfter,,,,) = engine.positions(btcMarket, trader);
+        (int256 sizeAfter,,,,,) = engine.positions(btcMarket, trader);
         uint256 expectedRemaining = SIZE_UNIT - SIZE_UNIT / 4;
         assertEq(uint256(sizeAfter), expectedRemaining, "Should have 75% remaining after 1 round");
 
@@ -501,7 +501,7 @@ contract LiquidationStressTest is Test {
         emit log_named_uint("  Keeper reward at edge case", keeperReward);
 
         _fullyLiquidate(btcMarket, trader);
-        (int256 finalSize,,,,) = engine.positions(btcMarket, trader);
+        (int256 finalSize,,,,,) = engine.positions(btcMarket, trader);
         assertEq(finalSize, 0, "Position should be fully closed");
 
         (bool healthy,,) = vault.healthCheck();
@@ -571,8 +571,8 @@ contract LiquidationStressTest is Test {
         emit log_named_uint("  Rounds to close 0.01 BTC", rounds2);
         assertLe(rounds2, rounds, "Smaller position should need <= rounds");
 
-        (int256 s1,,,,) = engine.positions(btcMarket, trader);
-        (int256 s2,,,,) = engine.positions(btcMarket, trader2);
+        (int256 s1,,,,,) = engine.positions(btcMarket, trader);
+        (int256 s2,,,,,) = engine.positions(btcMarket, trader2);
         assertEq(s1, 0);
         assertEq(s2, 0);
     }
@@ -614,7 +614,7 @@ contract LiquidationStressTest is Test {
         }
 
         for (uint256 i = 0; i < 8; i++) {
-            (int256 sz,,,,) = engine.positions(btcMarket, traders[i]);
+            (int256 sz,,,,,) = engine.positions(btcMarket, traders[i]);
             assertEq(sz, 0, "Short should be fully closed");
         }
 

@@ -55,7 +55,8 @@ interface IPerpEngine {
         uint256 entryPrice,
         uint256 margin,
         int256 lastCumulativeFunding,
-        uint256 lastUpdated
+        uint256 lastUpdated,
+        uint256 marginTierVersion
     );
 
     function getPosition(bytes32 marketId, address trader) external view returns (

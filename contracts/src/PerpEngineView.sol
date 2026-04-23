@@ -21,7 +21,8 @@ interface IPerpEngineView {
     );
     function positions(bytes32 marketId, address trader) external view returns (
         int256 size, uint256 entryPrice, uint256 margin,
-        int256 lastCumulativeFunding, uint256 lastUpdated
+        int256 lastCumulativeFunding, uint256 lastUpdated,
+        uint256 marginTierVersion
     );
     function traderMarginMode(address trader) external view returns (MarginMode);
     function traderActiveMarkets(address trader, uint256 index) external view returns (bytes32);
@@ -76,7 +77,7 @@ contract PerpEngineView {
 
         for (uint256 i = 0; i < count;) {
             bytes32 mId = engine.traderActiveMarkets(trader, i);
-            (int256 size, uint256 entryPrice, uint256 margin,,) = engine.positions(mId, trader);
+            (int256 size, uint256 entryPrice, uint256 margin,,,) = engine.positions(mId, trader);
 
             if (size != 0) {
                 (,,, uint256 initialMarginBps, uint256 maintenanceMarginBps,
@@ -104,7 +105,7 @@ contract PerpEngineView {
     /// @dev liqPrice = entryPrice - (margin * SIZE_PRECISION) / size (for longs)
     ///      liqPrice = entryPrice + (margin * SIZE_PRECISION) / abs(size) (for shorts)
     function getLiquidationPrice(bytes32 marketId, address trader) external view returns (uint256) {
-        (int256 size, uint256 entryPrice, uint256 margin,,) = engine.positions(marketId, trader);
+        (int256 size, uint256 entryPrice, uint256 margin,,,) = engine.positions(marketId, trader);
         if (size == 0 || margin == 0) return 0;
 
         (,,,, uint256 maintenanceMarginBps,,,,,,,,, ) = engine.markets(marketId);

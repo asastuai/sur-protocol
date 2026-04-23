@@ -143,10 +143,10 @@ contract PerpEngine {
     ///
     ///      NOT emitted for setMaxPriceAge or setCircuitBreakerParams (safety
     ///      parameters — retroactive by design, tighter = safer for all
-    ///      participants).  NOT yet emitted for setMarginTiers — that setter
-    ///      has a genuine retroactive bug (maintenance-margin change affects
-    ///      liquidation eligibility of existing positions) whose fix requires
-    ///      per-position tier snapshotting; pending dedicated refactor.
+    ///      participants).  Emitted by setMarginTiers as of the versioned
+    ///      tier-history refactor (see docs/MAPPING_3_MARGIN_TIERS_DESIGN.md):
+    ///      each bump pushes a new entry into marketMarginTiersHistory so
+    ///      already-open positions keep their snapshotted tier regime.
     /// @param paramId        keccak256 of the canonical parameter name.
     /// @param oldValue       Previous value ABI-encoded.
     /// @param newValue       New value ABI-encoded.
@@ -193,6 +193,14 @@ contract PerpEngine {
         uint256 margin;                 // locked margin in USDC (6 decimals)
         int256 lastCumulativeFunding;   // funding snapshot (18 decimals)
         uint256 lastUpdated;
+        /// @notice Mapping 3 prospective-only (see docs/MAPPING_3_MARGIN_TIERS_DESIGN.md):
+        ///         version of this market's tier array active at position open.
+        ///         _isLiquidatable reads tiers from this version, not the
+        ///         current live tiers, so admin tier bumps cannot retroactively
+        ///         alter this position's liquidation eligibility.
+        ///         Version 0 = "no tier snapshot taken; fall back to market's
+        ///         flat initialMarginBps / maintenanceMarginBps".
+        uint256 marginTierVersion;
     }
 
     /// @notice A leverage tier bracket (like tax brackets)
@@ -257,8 +265,28 @@ contract PerpEngine {
     mapping(bytes32 => uint256) public liquidatedInWindow;
     mapping(bytes32 => uint256) public windowStart;
 
-    /// @notice Tiered margin brackets per market. If empty, falls back to flat market.initialMarginBps
+    /// @notice Tiered margin brackets per market — current live version.
+    /// @dev Kept for backward-compatible reads by off-chain indexers. Mirrors
+    ///      marketMarginTiersHistory[marketId][currentVersion - 1]. Empty when
+    ///      version == 0 (no tiers configured; market uses flat rates).
     mapping(bytes32 => MarginTier[]) public marketMarginTiers;
+
+    /// @notice Historical tier arrays per market. A new version is appended
+    ///         every time setMarginTiers is called. Version N is stored at
+    ///         index N-1 (version 0 is reserved — no snapshot / flat rates).
+    /// @dev    Private because Solidity cannot auto-generate getters for
+    ///         mapping(bytes32 => MarginTier[][]). View helpers exposed below.
+    mapping(bytes32 => MarginTier[][]) private marketMarginTiersHistory;
+
+    /// @notice Current tier-version index per market. Positions opened against
+    ///         this market snapshot this value. 0 means no tiers configured.
+    mapping(bytes32 => uint256) public marketCurrentTierVersion;
+
+    /// @notice Upper bound on stored tier versions per market, to bound
+    ///         storage growth. When reached, setMarginTiers reverts until a
+    ///         future pruneVersion primitive (reference-counted, out of
+    ///         scope for this refactor) can free unreferenced versions.
+    uint256 public constant MAX_TIER_VERSIONS = 50;
 
     /// @notice OI caps per market (in SIZE_PRECISION units). 0 = unlimited
     mapping(bytes32 => uint256) public marketOiCap;
@@ -581,13 +609,41 @@ contract PerpEngine {
     //                   INTERNAL HELPERS
     // ============================================================
 
-    /// @notice Calculate required margin using tiered brackets (like tax brackets)
+    /// @notice Calculate required margin using tiered brackets (like tax brackets).
+    /// @dev Wrapper that uses the market's CURRENT tier version. Only
+    ///      appropriate for pricing new or growing positions at open time.
+    ///      For _isLiquidatable of an already-open position, use the
+    ///      versioned variant with that position's marginTierVersion snapshot.
     function _calculateTieredMargin(bytes32 marketId, uint256 notional, bool isInitial)
         internal view returns (uint256)
     {
-        MarginTier[] storage tiers = marketMarginTiers[marketId];
+        return _calculateTieredMarginForVersion(
+            marketId, notional, isInitial, marketCurrentTierVersion[marketId]
+        );
+    }
 
-        // Fallback to flat rate if no tiers configured
+    /// @notice Version-aware margin calculation used by _isLiquidatable and
+    ///         other prospective-only read paths (Mapping 3).
+    /// @param version The marginTierVersion snapshotted on the position, or
+    ///        the market's current version for opening/modifying positions.
+    ///        version == 0 means "no tiers configured / no snapshot" and the
+    ///        market's flat initialMarginBps / maintenanceMarginBps are used.
+    function _calculateTieredMarginForVersion(
+        bytes32 marketId,
+        uint256 notional,
+        bool isInitial,
+        uint256 version
+    ) internal view returns (uint256) {
+        if (version == 0) {
+            Market storage market = markets[marketId];
+            uint256 bpsRate = isInitial ? market.initialMarginBps : market.maintenanceMarginBps;
+            return (notional * bpsRate) / BPS;
+        }
+
+        MarginTier[] storage tiers = marketMarginTiersHistory[marketId][version - 1];
+
+        // Defensive: historical version with no tiers (shouldn't happen
+        // because setMarginTiers validates tiers.length > 0, but handle).
         if (tiers.length == 0) {
             Market storage market = markets[marketId];
             uint256 bpsRate = isInitial ? market.initialMarginBps : market.maintenanceMarginBps;
@@ -619,7 +675,11 @@ contract PerpEngine {
         return totalMargin;
     }
 
-    /// @notice Check if position is below maintenance using tiered brackets
+    /// @notice Check if position is below maintenance using tiered brackets.
+    /// @dev Mapping 3 prospective-only: uses the position's snapshotted
+    ///      marginTierVersion, NOT the market's current version. Admin
+    ///      tier bumps since the position opened do not retroactively
+    ///      alter this check. See docs/MAPPING_3_MARGIN_TIERS_DESIGN.md.
     function _isBelowMaintenance(bytes32 marketId, Position storage pos, uint256 currentPrice)
         internal view returns (bool)
     {
@@ -631,7 +691,9 @@ contract PerpEngine {
         int256 effectiveMargin = int256(pos.margin) + unrealizedPnl;
         if (effectiveMargin <= 0) return true;
 
-        uint256 maintRequired = _calculateTieredMargin(marketId, notional, false);
+        uint256 maintRequired = _calculateTieredMarginForVersion(
+            marketId, notional, false, pos.marginTierVersion
+        );
         return uint256(effectiveMargin) < maintRequired;
     }
 
@@ -753,6 +815,10 @@ contract PerpEngine {
         pos.entryPrice = price;
         pos.lastCumulativeFunding = market.cumulativeFunding;
         pos.lastUpdated = block.timestamp;
+        // Mapping 3: snapshot the market's current tier version. Zero when no
+        // tiers are configured, which is then handled as the flat-rate
+        // fallback inside _calculateTieredMarginForVersion.
+        pos.marginTierVersion = marketCurrentTierVersion[market.id];
 
         _updateOpenInterest(market, int256(0), sizeDelta);
         _checkOiCaps(market.id);
@@ -1671,20 +1737,74 @@ contract PerpEngine {
     //               TIERED LEVERAGE ADMIN
     // ============================================================
 
-    /// @notice Set tiered margin brackets for a market
+    error MaxTierVersionsExceeded();
+
+    /// @notice Set tiered margin brackets for a market. Prospective-only
+    ///         (Mapping 3, see docs/MAPPING_3_MARGIN_TIERS_DESIGN.md):
+    ///         pushes a new version into marketMarginTiersHistory. Positions
+    ///         already open continue to use their snapshotted version;
+    ///         newly-opened positions snapshot this new version.
     /// @dev Tiers must be sorted by maxNotional ascending. Last tier should have maxNotional = 0 (unlimited).
+    /// @dev Bounded by MAX_TIER_VERSIONS. When reached, admin must wait for
+    ///      a future pruneVersion primitive (reference-counted) to free
+    ///      unreferenced historical versions. Flagged as future work.
     function setMarginTiers(bytes32 marketId, MarginTier[] calldata tiers)
         external onlyOwner marketExists(marketId)
     {
-        delete marketMarginTiers[marketId];
+        uint256 existingVersions = marketMarginTiersHistory[marketId].length;
+        if (existingVersions >= MAX_TIER_VERSIONS) revert MaxTierVersionsExceeded();
+
+        // Validate tiers BEFORE touching storage.
         for (uint256 i = 0; i < tiers.length;) {
             if (tiers[i].initialMarginBps == 0 || tiers[i].initialMarginBps > BPS) revert InvalidParam();
             if (tiers[i].maintenanceMarginBps == 0 || tiers[i].maintenanceMarginBps >= tiers[i].initialMarginBps) revert InvalidParam();
             if (i > 0 && tiers[i].maxNotional != 0 && tiers[i].maxNotional <= tiers[i-1].maxNotional) revert InvalidParam();
+            unchecked { ++i; }
+        }
+
+        uint256 oldVersion = marketCurrentTierVersion[marketId];
+        uint256 newVersion = existingVersions + 1;
+
+        // Push new history entry (grow outer array, then fill the new slot).
+        marketMarginTiersHistory[marketId].push();
+        MarginTier[] storage dstHistory =
+            marketMarginTiersHistory[marketId][existingVersions];
+        for (uint256 i = 0; i < tiers.length;) {
+            dstHistory.push(tiers[i]);
+            unchecked { ++i; }
+        }
+
+        // Mirror into the legacy-facing marketMarginTiers mapping for
+        // backward-compatible off-chain indexer reads.
+        delete marketMarginTiers[marketId];
+        for (uint256 i = 0; i < tiers.length;) {
             marketMarginTiers[marketId].push(tiers[i]);
             unchecked { ++i; }
         }
+
+        marketCurrentTierVersion[marketId] = newVersion;
         emit MarginTiersUpdated(marketId, tiers.length);
+        emit ParameterBump(
+            keccak256(abi.encodePacked("PerpEngine.marginTiers:", marketId)),
+            abi.encode(oldVersion),
+            abi.encode(newVersion),
+            block.number,
+            msg.sender
+        );
+    }
+
+    /// @notice View helper — read the historical tier array for a given
+    ///         market + version. Useful for off-chain indexers and auditors.
+    /// @param marketId Market identifier.
+    /// @param version  Version index (1-based). Version 0 returns an empty
+    ///                 array and means "flat-rate fallback".
+    function getMarginTiersAtVersion(bytes32 marketId, uint256 version)
+        external view returns (MarginTier[] memory)
+    {
+        if (version == 0 || version > marketMarginTiersHistory[marketId].length) {
+            return new MarginTier[](0);
+        }
+        return marketMarginTiersHistory[marketId][version - 1];
     }
 
     /// @notice Set OI cap for a market (in SIZE_PRECISION units).
