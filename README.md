@@ -7,7 +7,7 @@
 **[→ Live at sur-protocol.vercel.app](https://sur-protocol.vercel.app)**
 
 [![Base L2](https://img.shields.io/badge/Base-Sepolia%20%2F%20Mainnet-0052FF.svg)](https://sur-protocol.vercel.app)
-[![Foundry](https://img.shields.io/badge/tests-494%20passing-brightgreen.svg)](https://book.getfoundry.sh/)
+[![Foundry](https://img.shields.io/badge/tests-531%20passing-brightgreen.svg)](https://book.getfoundry.sh/)
 [![Solidity](https://img.shields.io/badge/Solidity-0.8-363636.svg)](https://soliditylang.org/)
 [![EIP-712](https://img.shields.io/badge/orders-EIP--712-orange.svg)](https://eips.ethereum.org/EIPS/eip-712)
 [![License](https://img.shields.io/badge/license-BUSL--1.1-blue.svg)](LICENSE)
@@ -22,11 +22,24 @@ Hybrid architecture: off-chain matching engine + on-chain settlement on Base L2.
 
 SUR Protocol is a perpetual futures DEX designed for emerging markets — starting with Argentina — where access to derivatives has historically depended on foreign CEX accounts, USD rails, and trust in centralized custodians. SUR brings perp trading on-chain: USDC collateral, tiered and cross-margin liquidation, EIP-712 signed orders, and a hybrid architecture that keeps the order book off-chain (for latency and UX) while settlement, custody, and risk live on-chain (for non-custodial guarantees).
 
-**11 Solidity contracts · 494 passing Foundry tests · Base L2**
+**12 Solidity contracts · 531 passing Foundry tests · Base L2**
 
 - Live frontend: [sur-protocol.vercel.app](https://sur-protocol.vercel.app) — 15 crypto markets, TradingView charts, real-time price feeds via Binance / Pyth / Chainlink
 - Full perp trading stack: deposits, margin, position management, liquidation engine, insurance fund, oracle router
 - Non-custodial, permissionless, transparent — BUSL-1.1 licensed
+
+---
+
+## Agent-Native Layer
+
+Beyond the perp DEX base layer, SUR exposes four pieces architected for autonomous agents — not humans wrapping an API:
+
+- **MCP Server (25 tools)** — in [`mcp-server/`](mcp-server/). Any MCP-compatible agent (Claude, Eliza, custom) can deposit, trade, manage risk and settle without glue code.
+- **A2A Dark Pool** — on-chain OTC matching for agents with persistent reputation. Agents negotiate privately, settle publicly. Backed by the [proof-of-context](https://github.com/asastuai/proof-of-context) position paper.
+- **Intent Engine** — in [`intent-engine/`](intent-engine/). Natural-language order submission translated to signed EIP-712 transactions. Removes the orchestration layer between LLM reasoning and on-chain execution.
+- **x402 Payment Support** — native agent fee tiers for per-query, per-trade, per-intent usage patterns.
+
+These sit on top of the perp DEX; they are additive, not a rewrite of the core matching / settlement / liquidation math.
 
 ---
 
@@ -69,13 +82,20 @@ sur-protocol/
 |----------|---------|--------|
 | `PerpVault.sol` | USDC collateral custody, deposits, withdrawals | ✅ Complete |
 | `PerpEngine.sol` | Position management, PnL, margin, liquidation | ✅ Complete |
+| `PerpEngineView.sol` | Read-only view lens (bytecode-size optimization) | ✅ Complete |
 | `OrderSettlement.sol` | Batch trade settlement with EIP-712 signatures | ✅ Complete |
 | `Liquidator.sol` | Permissionless liquidation, keeper rewards, batch mode | ✅ Complete |
 | `InsuranceFund.sol` | Bad debt absorption, fund health tracking | ✅ Complete |
+| `AutoDeleveraging.sol` | Last-resort ADL when insurance fund depletes | ✅ Complete |
 | `OracleRouter.sol` | Pyth + Chainlink feeds, deviation checks, normalization | ✅ Complete |
-| `SurMath.sol` | Fixed-point math library (WAD precision) | ✅ Complete |
+| `CollateralManager.sol` | Yield-bearing collateral with haircut + liquidation-threshold snapshots | ✅ Complete |
+| `TradingVault.sol` | Pooled trading vaults (copy-trading / HLP-style) | ✅ Complete |
+| `A2ADarkPool.sol` | Agent-to-agent OTC with persistent reputation | ✅ Complete |
+| `SurTimelock.sol` | Governance timelock enforcing prospective-only admin updates | ✅ Complete |
 
-**Phase 1 core protocol: complete.**
+Libraries: `SurMath.sol` (WAD fixed-point math) · `FreshnessTypes.sol` (canonical event schema for freshness-gated settlement).
+
+**Phase 1 core protocol: complete. Mapping 3 (prospective-only admin parameters) and Mapping 4 (freshness event schema) landed; see `docs/MAPPING_3_*` and `docs/MAPPING_4_*`.**
 
 ---
 
