@@ -150,6 +150,27 @@ The roadmap progresses from the cheapest items (prospective-only admin parameter
 
 BUSL-1.1 (Business Source License). See [LICENSE](LICENSE).
 
+Under BUSL-1.1, the source code is available for review, research, and non-commercial use. **Commercial use requires a separate license** — see below.
+
+---
+
+## Commercial Use & Licensing
+
+SUR Protocol is available for commercial licensing under several structures, depending on the licensee's intended use, timeline, and scope:
+
+- **Non-exclusive commercial license** — perpetual rights to deploy, modify, and operate the protocol under the licensee's own branding. Other licensees may operate in parallel. Recommended for most buyers. Indicative range: **$150k–$250k USD**.
+- **Exclusive commercial license** — exclusivity scoped by geography, chain, or vertical for a negotiated time window. Indicative range: **$300k–$500k USD**.
+- **Full IP acquisition** — full transfer of the codebase and associated rights. Indicative range: **$500k–$1M+ USD** depending on scope.
+- **Acquihire** — codebase transfer plus author joins the acquiring team as technical lead. Structure negotiated per deal.
+
+What's included in any licensed package goes beyond the public repository: production deployment configs, ops runbooks, knowledge-transfer hours with the author, and private-repo access for the licensee's internal operations.
+
+**Who buys this.** Teams launching a perp DEX on a new L2, white-label providers packaging perp infrastructure, exchanges looking to add derivatives, or investors funding portfolio companies that need the tech stack. Serious inbound welcome; anonymous / rushed approaches will not be engaged.
+
+**Contact:** **`juancmaisu@outlook.com`** — preferred subject line: "SUR Protocol licensing inquiry". A technical brief is available on request after an initial exchange.
+
+The author ([Juan Cruz Maisu](https://github.com/asastuai)) is based in Buenos Aires, Argentina, and operates under Argentinian software-export tax regime for international licensing transactions.
+
 ---
 
 Built by [Juan Cruz Maisu](https://github.com/asastuai) · Buenos Aires, Argentina
