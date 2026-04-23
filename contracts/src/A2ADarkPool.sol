@@ -72,6 +72,26 @@ contract A2ADarkPool {
     event LargeTradeMinReputationUpdated(uint256 newMinReputation);
     event PauseStatusChanged(bool isPaused);
 
+    /// @notice Emitted whenever a position-economics parameter changes prospectively.
+    /// @dev See docs/MAPPING_3_prospective_params.md for the convention and
+    ///      docs/MAPPING_4_freshness_event_schema.md for the cross-contract schema.
+    /// @param paramId        keccak256 of the canonical parameter name
+    ///                       (e.g. keccak256("A2ADarkPool.feeBps")).
+    /// @param oldValue       Previous value ABI-encoded.
+    /// @param newValue       New value ABI-encoded.
+    /// @param effectiveBlock Block at which the new value begins applying to
+    ///                       new positions. Equal to block.number for direct
+    ///                       onlyOwner setters; increased by timelock.delay()
+    ///                       when gated through SurTimelock.
+    /// @param admin          Address that triggered the update.
+    event ParameterBump(
+        bytes32 indexed paramId,
+        bytes oldValue,
+        bytes newValue,
+        uint256 effectiveBlock,
+        address indexed admin
+    );
+
     // ============================================================
     //                    STRUCTS
     // ============================================================
@@ -91,6 +111,11 @@ contract A2ADarkPool {
         uint256 expiresAt;          // unix timestamp
         IntentStatus status;
         uint256 filledResponseId;   // which response filled this intent
+        /// @notice Fee in bps snapshotted at intent post time.
+        /// @dev Prospective-only: settlement uses this value, NOT the current
+        ///      contract-level feeBps. Admin bumps to feeBps do not retroactively
+        ///      alter fees on intents already posted. See docs/MAPPING_3_prospective_params.md.
+        uint256 feeBpsAtPost;
     }
 
     struct Response {
@@ -235,7 +260,8 @@ contract A2ADarkPool {
             createdAt: block.timestamp,
             expiresAt: block.timestamp + duration,
             status: IntentStatus.Open,
-            filledResponseId: 0
+            filledResponseId: 0,
+            feeBpsAtPost: feeBps
         });
 
         activeIntentIds.push(intentId);
@@ -353,9 +379,12 @@ contract A2ADarkPool {
         engine.openPosition(intent.marketId, buyer, int256(size), price);
         engine.openPosition(intent.marketId, seller, -int256(size), price);
 
-        // H-11 fix: Collect fees AFTER position opening confirmed
+        // H-11 fix: Collect fees AFTER position opening confirmed.
+        // Prospective-only (Mapping 3): settlement uses intent.feeBpsAtPost, not
+        // the current feeBps. An admin bump of feeBps between postIntent and
+        // acceptAndSettle does not retroactively alter the fee on this trade.
         uint256 notional = (price * size) / SIZE_PRECISION;
-        uint256 feePerSide = (notional * feeBps) / BPS;
+        uint256 feePerSide = (notional * intent.feeBpsAtPost) / BPS;
         if (feePerSide > 0) {
             vault.internalTransfer(buyer, feeRecipient, feePerSide);
             vault.internalTransfer(seller, feeRecipient, feePerSide);
@@ -475,10 +504,21 @@ contract A2ADarkPool {
         emit OperatorUpdated(op, status);
     }
 
+    /// @notice Update the per-side fee in bps. Prospective-only (Mapping 3):
+    ///         intents already posted continue to settle at their snapshotted
+    ///         feeBpsAtPost; only new intents use `newFee`.
     function setFeeBps(uint256 newFee) external onlyOwner {
         require(newFee <= 50, "Max 0.5%");
+        uint256 old = feeBps;
         feeBps = newFee;
         emit FeeBpsUpdated(newFee);
+        emit ParameterBump(
+            keccak256("A2ADarkPool.feeBps"),
+            abi.encode(old),
+            abi.encode(newFee),
+            block.number,
+            msg.sender
+        );
     }
 
     function setFeeRecipient(address newRecip) external onlyOwner {
@@ -487,14 +527,37 @@ contract A2ADarkPool {
         emit FeeRecipientUpdated(newRecip);
     }
 
+    /// @notice Update the notional threshold above which reputation is required.
+    /// @dev Prospective-by-construction: read only at postIntent, so intents
+    ///      already posted are unaffected by bumps here. Emits ParameterBump
+    ///      for schema consistency with other prospective-only parameters.
     function setLargeTradeThreshold(uint256 threshold) external onlyOwner {
+        uint256 old = largeTradeThreshold;
         largeTradeThreshold = threshold;
         emit LargeTradeThresholdUpdated(threshold);
+        emit ParameterBump(
+            keccak256("A2ADarkPool.largeTradeThreshold"),
+            abi.encode(old),
+            abi.encode(threshold),
+            block.number,
+            msg.sender
+        );
     }
 
+    /// @notice Update the minimum reputation required for large trades.
+    /// @dev Prospective-by-construction: read only at postIntent. Emits
+    ///      ParameterBump for schema consistency.
     function setLargeTradeMinReputation(uint256 minRep) external onlyOwner {
+        uint256 old = largeTradeMinReputation;
         largeTradeMinReputation = minRep;
         emit LargeTradeMinReputationUpdated(minRep);
+        emit ParameterBump(
+            keccak256("A2ADarkPool.largeTradeMinReputation"),
+            abi.encode(old),
+            abi.encode(minRep),
+            block.number,
+            msg.sender
+        );
     }
 
     function pause() external onlyOwner {

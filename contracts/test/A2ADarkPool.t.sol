@@ -71,7 +71,7 @@ contract A2ADarkPoolTest is Test {
         uint256 id = pool.postIntent(btcMarket, true, 10 * SIZE_U, 49_800 * USDC_U, 50_200 * USDC_U, 3600);
 
         assertEq(id, 1);
-        (uint256 iid, address agent,, bool isBuy, uint256 size, uint256 minP, uint256 maxP,,, A2ADarkPool.IntentStatus status,) = pool.intents(id);
+        (uint256 iid, address agent,, bool isBuy, uint256 size, uint256 minP, uint256 maxP,,, A2ADarkPool.IntentStatus status,,) = pool.intents(id);
         assertEq(iid, 1);
         assertEq(agent, agentA);
         assertTrue(isBuy);
@@ -85,7 +85,7 @@ contract A2ADarkPoolTest is Test {
         vm.prank(agentB);
         uint256 id = pool.postIntent(btcMarket, false, 5 * SIZE_U, 50_000 * USDC_U, 50_500 * USDC_U, 3600);
 
-        (,,, bool isBuy,,,,,,, ) = pool.intents(id);
+        (,,, bool isBuy,,,,,,,,) = pool.intents(id);
         assertFalse(isBuy);
     }
 
@@ -114,7 +114,7 @@ contract A2ADarkPoolTest is Test {
         vm.prank(agentA);
         pool.cancelIntent(id);
 
-        (,,,,,,,,,A2ADarkPool.IntentStatus status,) = pool.intents(id);
+        (,,,,,,,,,A2ADarkPool.IntentStatus status,,) = pool.intents(id);
         assertTrue(status == A2ADarkPool.IntentStatus.Cancelled);
     }
 
@@ -211,7 +211,7 @@ contract A2ADarkPoolTest is Test {
         pool.acceptAndSettle(intentId, respId);
 
         // Verify intent is filled
-        (,,,,,,,,,A2ADarkPool.IntentStatus status,) = pool.intents(intentId);
+        (,,,,,,,,,A2ADarkPool.IntentStatus status,,) = pool.intents(intentId);
         assertTrue(status == A2ADarkPool.IntentStatus.Filled);
 
         // Verify positions were opened
@@ -377,5 +377,196 @@ contract A2ADarkPoolTest is Test {
         vm.prank(agentA);
         vm.expectRevert(A2ADarkPool.Paused.selector);
         pool.postIntent(btcMarket, true, 1 * SIZE_U, 49_000 * USDC_U, 51_000 * USDC_U, 3600);
+    }
+
+    // ============================================================
+    //            MAPPING 3 — Prospective-only parameter updates
+    //
+    // Acceptance-test families from docs/MAPPING_3_prospective_params.md
+    // ============================================================
+
+    /// @notice Helper: fund an agent, post intent, post response, accept+settle.
+    ///         Returns the feePerSide charged at settlement for assertion.
+    function _fullFlowWithFee(uint256 size, uint256 price) internal returns (uint256 feePerSide) {
+        // Fund both agents so the trade can settle.
+        deal(address(usdc), agentA, 100_000 * USDC_U);
+        deal(address(usdc), agentB, 100_000 * USDC_U);
+        vm.prank(agentA);
+        usdc.approve(address(vault), type(uint256).max);
+        vm.prank(agentB);
+        usdc.approve(address(vault), type(uint256).max);
+        vm.prank(agentA);
+        vault.deposit(50_000 * USDC_U);
+        vm.prank(agentB);
+        vault.deposit(50_000 * USDC_U);
+
+        vm.prank(agentA);
+        uint256 intentId = pool.postIntent(btcMarket, true, size, price * 95 / 100, price * 105 / 100, 3600);
+
+        vm.warp(block.timestamp + 10);
+        vm.prank(agentB);
+        uint256 respId = pool.postResponse(intentId, price, 3600);
+
+        uint256 feeRecipBalBefore = vault.balances(feeRecipient);
+        vm.prank(agentA);
+        pool.acceptAndSettle(intentId, respId);
+        uint256 feeRecipBalAfter = vault.balances(feeRecipient);
+
+        // Total fee = 2 * feePerSide (charged to both sides).
+        feePerSide = (feeRecipBalAfter - feeRecipBalBefore) / 2;
+    }
+
+    function test_mapping3_feeBps_bumpIsProspective_onExistingIntent() public {
+        // Given: feeBps = 3 (0.03%), an intent posted at this fee.
+        uint256 size = 1 * SIZE_U;
+        uint256 price = 50_000 * USDC_U;
+
+        deal(address(usdc), agentA, 100_000 * USDC_U);
+        deal(address(usdc), agentB, 100_000 * USDC_U);
+        vm.prank(agentA);
+        usdc.approve(address(vault), type(uint256).max);
+        vm.prank(agentB);
+        usdc.approve(address(vault), type(uint256).max);
+        vm.prank(agentA);
+        vault.deposit(50_000 * USDC_U);
+        vm.prank(agentB);
+        vault.deposit(50_000 * USDC_U);
+
+        vm.prank(agentA);
+        uint256 intentId = pool.postIntent(btcMarket, true, size, price * 95 / 100, price * 105 / 100, 3600);
+
+        // Snapshot at post: the intent locked in feeBps = 3.
+        (,,,,,,,,,,, uint256 feeBpsAtPost) = pool.intents(intentId);
+        assertEq(feeBpsAtPost, 3, "Intent should have snapshotted feeBps=3 at post");
+
+        // Admin bumps feeBps to 10 (0.1%). Prospective-only: should NOT
+        // affect the existing intent's settlement.
+        vm.prank(owner);
+        pool.setFeeBps(10);
+
+        vm.warp(block.timestamp + 10);
+        vm.prank(agentB);
+        uint256 respId = pool.postResponse(intentId, price, 3600);
+
+        uint256 feeRecipBalBefore = vault.balances(feeRecipient);
+        vm.prank(agentA);
+        pool.acceptAndSettle(intentId, respId);
+        uint256 feeRecipBalAfter = vault.balances(feeRecipient);
+
+        uint256 totalFeeCollected = feeRecipBalAfter - feeRecipBalBefore;
+        uint256 notional = (price * size) / SIZE_U;
+        uint256 expectedPerSide_old = (notional * 3) / 10_000;   // at old fee
+        uint256 expectedTotal_old = expectedPerSide_old * 2;
+
+        assertEq(totalFeeCollected, expectedTotal_old,
+            "Settlement fee MUST use snapshotted feeBps (3 bps), NOT current feeBps (10 bps)");
+    }
+
+    function test_mapping3_feeBps_newIntentUsesNewFee() public {
+        // Given: admin bumps feeBps first, then a new intent is posted.
+        vm.prank(owner);
+        pool.setFeeBps(10);
+
+        uint256 size = 1 * SIZE_U;
+        uint256 price = 50_000 * USDC_U;
+
+        deal(address(usdc), agentA, 100_000 * USDC_U);
+        deal(address(usdc), agentB, 100_000 * USDC_U);
+        vm.prank(agentA);
+        usdc.approve(address(vault), type(uint256).max);
+        vm.prank(agentB);
+        usdc.approve(address(vault), type(uint256).max);
+        vm.prank(agentA);
+        vault.deposit(50_000 * USDC_U);
+        vm.prank(agentB);
+        vault.deposit(50_000 * USDC_U);
+
+        vm.prank(agentA);
+        uint256 intentId = pool.postIntent(btcMarket, true, size, price * 95 / 100, price * 105 / 100, 3600);
+
+        // The new intent should have snapshotted feeBps = 10.
+        (,,,,,,,,,,, uint256 feeBpsAtPost) = pool.intents(intentId);
+        assertEq(feeBpsAtPost, 10, "New intent should have snapshotted feeBps=10");
+
+        vm.warp(block.timestamp + 10);
+        vm.prank(agentB);
+        uint256 respId = pool.postResponse(intentId, price, 3600);
+
+        uint256 feeRecipBalBefore = vault.balances(feeRecipient);
+        vm.prank(agentA);
+        pool.acceptAndSettle(intentId, respId);
+        uint256 feeRecipBalAfter = vault.balances(feeRecipient);
+
+        uint256 totalFeeCollected = feeRecipBalAfter - feeRecipBalBefore;
+        uint256 notional = (price * size) / SIZE_U;
+        uint256 expectedPerSide_new = (notional * 10) / 10_000;
+        uint256 expectedTotal_new = expectedPerSide_new * 2;
+
+        assertEq(totalFeeCollected, expectedTotal_new,
+            "Settlement fee MUST use the new feeBps (10 bps) for newly posted intents");
+    }
+
+    function test_mapping3_setFeeBps_emitsParameterBump() public {
+        vm.expectEmit(true, false, false, true);
+        emit A2ADarkPool.ParameterBump(
+            keccak256("A2ADarkPool.feeBps"),
+            abi.encode(uint256(3)),   // old feeBps is the default
+            abi.encode(uint256(7)),
+            block.number,
+            owner
+        );
+
+        vm.prank(owner);
+        pool.setFeeBps(7);
+    }
+
+    function test_mapping3_setLargeTradeThreshold_emitsParameterBump() public {
+        uint256 oldVal = pool.largeTradeThreshold();
+        uint256 newVal = 20_000 * USDC_U;
+
+        vm.expectEmit(true, false, false, true);
+        emit A2ADarkPool.ParameterBump(
+            keccak256("A2ADarkPool.largeTradeThreshold"),
+            abi.encode(oldVal),
+            abi.encode(newVal),
+            block.number,
+            owner
+        );
+
+        vm.prank(owner);
+        pool.setLargeTradeThreshold(newVal);
+    }
+
+    function test_mapping3_setLargeTradeMinReputation_emitsParameterBump() public {
+        uint256 oldVal = pool.largeTradeMinReputation();
+        uint256 newVal = 700;
+
+        vm.expectEmit(true, false, false, true);
+        emit A2ADarkPool.ParameterBump(
+            keccak256("A2ADarkPool.largeTradeMinReputation"),
+            abi.encode(oldVal),
+            abi.encode(newVal),
+            block.number,
+            owner
+        );
+
+        vm.prank(owner);
+        pool.setLargeTradeMinReputation(newVal);
+    }
+
+    /// @notice Counter-test: non-prospective setters (e.g. setOperator, setFeeRecipient)
+    ///         do NOT emit ParameterBump. Only position-economics setters do.
+    function test_mapping3_setFeeRecipient_doesNotEmitParameterBump() public {
+        vm.recordLogs();
+        vm.prank(owner);
+        pool.setFeeRecipient(makeAddr("newRecipient"));
+
+        // Walk the emitted logs and assert no ParameterBump topic0 appears.
+        bytes32 paramBumpTopic = keccak256("ParameterBump(bytes32,bytes,bytes,uint256,address)");
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        for (uint256 i = 0; i < logs.length; i++) {
+            assertNotEq(logs[i].topics[0], paramBumpTopic,
+                "setFeeRecipient should NOT emit ParameterBump (address update, not position economics)");
+        }
     }
 }
