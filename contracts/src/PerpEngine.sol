@@ -131,6 +131,34 @@ contract PerpEngine {
 
     event OperatorUpdated(address indexed operator, bool status);
     event PauseStatusChanged(bool isPaused);
+
+    /// @notice Emitted whenever a prospective-only risk-limit parameter changes.
+    /// @dev See docs/MAPPING_3_prospective_params.md.
+    ///
+    ///      Scope in PerpEngine: the parameter being updated is a *risk limit*
+    ///      (exposure cap, OI cap, skew cap, reserve factor) — a check at
+    ///      entry / modification that does not retroactively close or alter
+    ///      economic terms of already-open positions. A tightening bump blocks
+    ///      new entries or enlargement; existing positions remain intact.
+    ///
+    ///      NOT emitted for setMaxPriceAge or setCircuitBreakerParams (safety
+    ///      parameters — retroactive by design, tighter = safer for all
+    ///      participants).  NOT yet emitted for setMarginTiers — that setter
+    ///      has a genuine retroactive bug (maintenance-margin change affects
+    ///      liquidation eligibility of existing positions) whose fix requires
+    ///      per-position tier snapshotting; pending dedicated refactor.
+    /// @param paramId        keccak256 of the canonical parameter name.
+    /// @param oldValue       Previous value ABI-encoded.
+    /// @param newValue       New value ABI-encoded.
+    /// @param effectiveBlock Block at which the new value begins applying.
+    /// @param admin          Address that triggered the update.
+    event ParameterBump(
+        bytes32 indexed paramId,
+        bytes oldValue,
+        bytes newValue,
+        uint256 effectiveBlock,
+        address indexed admin
+    );
     event CircuitBreakerTriggered(bytes32 indexed marketId, uint256 liquidatedNotional, uint256 openInterestNotional, uint256 timestamp);
     event CircuitBreakerReset(uint256 timestamp);
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
@@ -1607,10 +1635,21 @@ contract PerpEngine {
         emit FundingPoolUpdated(old, newPool);
     }
 
+    /// @notice Update the per-trader exposure limit. Prospective-by-construction:
+    ///         the check is evaluated at open / modify time, so existing
+    ///         positions below the new cap remain untouched.
     function setMaxExposureBps(uint256 newBps) external onlyOwner {
         if (newBps > BPS && newBps != 0) revert InvalidParam();
+        uint256 old = maxExposureBps;
         maxExposureBps = newBps;
         emit ExposureLimitUpdated(newBps);
+        emit ParameterBump(
+            keccak256("PerpEngine.maxExposureBps"),
+            abi.encode(old),
+            abi.encode(newBps),
+            block.number,
+            msg.sender
+        );
     }
 
     function setCircuitBreakerParams(uint256 windowSecs, uint256 thresholdBps, uint256 cooldownSecs) external onlyOwner {
@@ -1648,25 +1687,55 @@ contract PerpEngine {
         emit MarginTiersUpdated(marketId, tiers.length);
     }
 
-    /// @notice Set OI cap for a market (in SIZE_PRECISION units)
+    /// @notice Set OI cap for a market (in SIZE_PRECISION units).
+    /// @dev Prospective-by-construction: the cap is checked when a position
+    ///      open/modify would push market OI above the cap. Existing positions
+    ///      below the cap are not retroactively closed.
+    /// @dev paramId includes the marketId so indexers can subscribe per-market.
     function setOiCap(bytes32 marketId, uint256 cap) external onlyOwner marketExists(marketId) {
+        uint256 old = marketOiCap[marketId];
         marketOiCap[marketId] = cap;
         emit OiCapUpdated(marketId, cap);
+        emit ParameterBump(
+            keccak256(abi.encodePacked("PerpEngine.oiCap:", marketId)),
+            abi.encode(old),
+            abi.encode(cap),
+            block.number,
+            msg.sender
+        );
     }
 
-    /// @notice Set OI skew cap (5000-10000 BPS, where 7000 = 70% max dominance)
+    /// @notice Set OI skew cap (5000-10000 BPS, where 7000 = 70% max dominance).
+    ///         Prospective-by-construction: entry/modify-time check.
     function setOiSkewCap(uint256 newCapBps) external onlyOwner {
         if (newCapBps < 5000 || newCapBps > BPS) revert InvalidParam();
+        uint256 old = oiSkewCapBps;
         oiSkewCapBps = newCapBps;
         emit OiSkewCapUpdated(newCapBps);
+        emit ParameterBump(
+            keccak256("PerpEngine.oiSkewCapBps"),
+            abi.encode(old),
+            abi.encode(newCapBps),
+            block.number,
+            msg.sender
+        );
     }
 
-    /// @notice Set reserve factor: max OI notional as % of pool TVL
+    /// @notice Set reserve factor: max OI notional as % of pool TVL.
+    ///         Prospective-by-construction: entry/modify-time check.
     /// @param newFactorBps 0 = disabled, 8000 = 80% of pool TVL
     function setReserveFactor(uint256 newFactorBps) external onlyOwner {
         if (newFactorBps > BPS) revert InvalidParam();
+        uint256 old = reserveFactorBps;
         reserveFactorBps = newFactorBps;
         emit ReserveFactorUpdated(newFactorBps);
+        emit ParameterBump(
+            keccak256("PerpEngine.reserveFactorBps"),
+            abi.encode(old),
+            abi.encode(newFactorBps),
+            block.number,
+            msg.sender
+        );
     }
 
     /// @notice Configure price impact for a market

@@ -593,4 +593,143 @@ contract PerpEngineTest is Test {
         // Long and short PnL are always exactly opposite
         assert(pnlLong + pnlShort == 0);
     }
+
+    // ============================================================
+    //      MAPPING 3 — ParameterBump on risk-limit setters
+    // Acceptance tests from docs/MAPPING_3_prospective_params.md
+    // ============================================================
+
+    function test_mapping3_setMaxExposureBps_emitsParameterBump() public {
+        // setUp already calls setMaxExposureBps(0); use different old value.
+        vm.expectEmit(true, false, false, true);
+        emit PerpEngine.ParameterBump(
+            keccak256("PerpEngine.maxExposureBps"),
+            abi.encode(uint256(0)),
+            abi.encode(uint256(500)),
+            block.number,
+            owner
+        );
+        vm.prank(owner);
+        engine.setMaxExposureBps(500);
+    }
+
+    function test_mapping3_setOiCap_emitsParameterBump() public {
+        // addMarket does not populate marketOiCap; default value is zero.
+        uint256 oldCap = 0;
+        uint256 newCap = 50 * SIZE;
+        vm.expectEmit(true, false, false, true);
+        emit PerpEngine.ParameterBump(
+            keccak256(abi.encodePacked("PerpEngine.oiCap:", btcMarketId)),
+            abi.encode(oldCap),
+            abi.encode(newCap),
+            block.number,
+            owner
+        );
+        vm.prank(owner);
+        engine.setOiCap(btcMarketId, newCap);
+    }
+
+    function test_mapping3_setOiSkewCap_emitsParameterBump() public {
+        // setUp called setOiSkewCap(10000); set to something else.
+        vm.expectEmit(true, false, false, true);
+        emit PerpEngine.ParameterBump(
+            keccak256("PerpEngine.oiSkewCapBps"),
+            abi.encode(uint256(10_000)),
+            abi.encode(uint256(8_000)),
+            block.number,
+            owner
+        );
+        vm.prank(owner);
+        engine.setOiSkewCap(8_000);
+    }
+
+    function test_mapping3_setReserveFactor_emitsParameterBump() public {
+        vm.expectEmit(true, false, false, true);
+        emit PerpEngine.ParameterBump(
+            keccak256("PerpEngine.reserveFactorBps"),
+            abi.encode(uint256(0)),
+            abi.encode(uint256(8_000)),
+            block.number,
+            owner
+        );
+        vm.prank(owner);
+        engine.setReserveFactor(8_000);
+    }
+
+    /// @notice Prospective-by-construction verification: a bump of the
+    ///         per-trader exposure limit does NOT force-close or alter
+    ///         an already-open position that was within the old limit.
+    function test_mapping3_maxExposureBps_bumpDoesNotClosePosition() public {
+        // Given: maxExposureBps disabled, open a position for alice.
+        vm.prank(operator);
+        engine.openPosition(btcMarketId, alice, int256(1 * SIZE), BTC_PRICE);
+        (int256 sizeBefore,,,,) = engine.positions(btcMarketId, alice);
+        assertEq(sizeBefore, int256(1 * SIZE));
+
+        // Admin bumps the exposure cap to a tiny value.
+        vm.prank(owner);
+        engine.setMaxExposureBps(1); // 0.01% — way below alice's position
+
+        // Position remains open with the same size. No force-close, no state change.
+        (int256 sizeAfter,,,,) = engine.positions(btcMarketId, alice);
+        assertEq(sizeAfter, sizeBefore,
+            "Exposure-cap bump MUST NOT retroactively alter an open position");
+    }
+
+    /// @notice Counter-test: setMaxPriceAge is a safety/oracle-freshness
+    ///         guard, NOT a position-economics parameter. It does not
+    ///         emit ParameterBump.
+    function test_mapping3_setMaxPriceAge_doesNotEmitParameterBump() public {
+        bytes32 paramBumpTopic =
+            keccak256("ParameterBump(bytes32,bytes,bytes,uint256,address)");
+        vm.recordLogs();
+        vm.prank(owner);
+        engine.setMaxPriceAge(30);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        for (uint256 i = 0; i < logs.length; i++) {
+            assertNotEq(logs[i].topics[0], paramBumpTopic,
+                "setMaxPriceAge must NOT emit ParameterBump (safety parameter)");
+        }
+    }
+
+    /// @notice Counter-test: setCircuitBreakerParams is a safety switch,
+    ///         retroactive by design. No ParameterBump.
+    function test_mapping3_setCircuitBreakerParams_doesNotEmitParameterBump() public {
+        bytes32 paramBumpTopic =
+            keccak256("ParameterBump(bytes32,bytes,bytes,uint256,address)");
+        vm.recordLogs();
+        vm.prank(owner);
+        engine.setCircuitBreakerParams(3600, 2000, 1800);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        for (uint256 i = 0; i < logs.length; i++) {
+            assertNotEq(logs[i].topics[0], paramBumpTopic,
+                "setCircuitBreakerParams must NOT emit ParameterBump (safety parameter)");
+        }
+    }
+
+    /// @notice Documented pending refactor: setMarginTiers has a real
+    ///         retroactive bug (maintenance-margin change alters liquidation
+    ///         eligibility of existing positions). Fix requires per-position
+    ///         tier snapshotting. Until that refactor lands, setMarginTiers
+    ///         does NOT emit ParameterBump — emitting would incorrectly
+    ///         signal that the prospective-only convention is upheld.
+    function test_mapping3_setMarginTiers_doesNotEmitParameterBump_pendingRefactor() public {
+        PerpEngine.MarginTier[] memory tiers = new PerpEngine.MarginTier[](1);
+        tiers[0] = PerpEngine.MarginTier({
+            maxNotional: 0,
+            initialMarginBps: 500,
+            maintenanceMarginBps: 250
+        });
+
+        bytes32 paramBumpTopic =
+            keccak256("ParameterBump(bytes32,bytes,bytes,uint256,address)");
+        vm.recordLogs();
+        vm.prank(owner);
+        engine.setMarginTiers(btcMarketId, tiers);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        for (uint256 i = 0; i < logs.length; i++) {
+            assertNotEq(logs[i].topics[0], paramBumpTopic,
+                "setMarginTiers does not emit ParameterBump until the per-position snapshot refactor lands");
+        }
+    }
 }

@@ -52,6 +52,17 @@ The change in these parameters alters the economic meaning of open positions.
 
 Count: 15 setters across four contracts.
 
+#### 3.1a Reclassification findings from implementation
+
+Implementation revealed that the initial classification above was too aggressive on the PerpEngine setters. The detailed audit of read sites showed that five of the parameters listed under PerpEngine (maxExposureBps, oiCap, oiSkewCap, reserveFactor, maxPriceAge) are **risk-limit or safety parameters**, not position-economics parameters:
+
+- **`setMaxExposureBps`, `setOiCap`, `setOiSkewCap`, `setReserveFactor`** are *risk limits* read at position-open and position-modify time. A tightening bump blocks new entries or enlargement, but does not retroactively close an already-open position below the new limit, and does not alter its economic terms (fees, liquidation threshold, PnL calculation). They satisfy the prospective-only invariant **by construction**, with no snapshot field required. Implementation emits `ParameterBump` from each of the four for schema consistency.
+- **`setMaxPriceAge`** is an oracle-freshness *safety* guard. Tightening it rejects stale-price operations more aggressively — a fail-safe behavior that benefits all participants regardless of when their positions opened. Implementation does NOT emit `ParameterBump` from this setter; classified as safety-adjacent, same category as `setCircuitBreakerParams`.
+
+**Newly identified retroactive bug:** The implementation audit surfaced **`setMarginTiers(bytes32, MarginTier[])`** as a genuine position-economics setter not originally listed in §3.1. `_calculateTieredMargin` is read during liquidation eligibility checks of already-open positions, so an admin tier bump can retroactively alter which positions are liquidation-eligible. Fix requires per-position tier snapshotting (which interacts with the fact that tier selection depends on current position size — positions that grow across tier boundaries complicate the snapshot semantics). Documented as a pending dedicated refactor; `setMarginTiers` does not emit `ParameterBump` until that refactor lands — emitting would incorrectly signal that the prospective-only convention is already upheld.
+
+The CollateralManager, OrderSettlement, and A2ADarkPool classifications remain as originally stated. Those implementations did require snapshot refactors and are complete.
+
 ### 3.2 Safety / emergency parameters (STAY retroactive by design)
 
 These parameters exist to halt ongoing harm; they must apply immediately.
