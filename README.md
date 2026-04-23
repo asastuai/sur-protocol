@@ -121,6 +121,16 @@ cp .env.example .env
 
 ---
 
+## Threat model and integration roadmap
+
+SUR protects custody, settlement finality, margin / liquidation correctness, and oracle integrity (see [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md) for the full articulation). What it does *not* currently protect against — and what a forthcoming integration is designed to close — is a class of failures where a computationally correct operation clears settlement against *stale contextual state* (oracle round drift between match-time and settle-time, timing-manipulated liquidations, retroactive admin-parameter updates on open positions, counterparty-state drift, settlement-window griefing).
+
+This gap is the subject of a position paper published as [asastuai/proof-of-context](https://github.com/asastuai/proof-of-context) (v0.6) and is being mapped onto SUR-specific integration points in [`docs/proof-of-context-mapping.md`](docs/proof-of-context-mapping.md). The integration is phased, additive, and does not alter the core perp-futures pricing, matching, or liquidation math; it gates *settlement* on freshness rather than changing what is being computed.
+
+The roadmap progresses from the cheapest items (prospective-only admin parameters; documentation framing) through moderate-complexity items (triple-anchor timing on liquidations; freshness-typed event schema) to the first end-to-end PoC-gated canary market. No claim is made that any of these items are live on SUR today — they are the explicit, publicly-documented work-in-progress.
+
+---
+
 ## Network
 
 - **Testnet:** Base Sepolia (live, integrated with frontend)
