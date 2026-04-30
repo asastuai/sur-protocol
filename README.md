@@ -1,8 +1,6 @@
-<div align="center">
-
 # SUR Protocol
 
-### Perpetual Futures DEX — built for Argentina and Latin America
+### First agent-native perpetual futures DEX. Settlement gating by Proof-of-Context in active integration.
 
 **[→ Live at sur-protocol.vercel.app](https://sur-protocol.vercel.app)**
 
@@ -10,51 +8,73 @@
 [![Foundry](https://img.shields.io/badge/tests-531%20passing-brightgreen.svg)](https://book.getfoundry.sh/)
 [![Solidity](https://img.shields.io/badge/Solidity-0.8-363636.svg)](https://soliditylang.org/)
 [![EIP-712](https://img.shields.io/badge/orders-EIP--712-orange.svg)](https://eips.ethereum.org/EIPS/eip-712)
-[![License](https://img.shields.io/badge/license-BUSL--1.1-blue.svg)](LICENSE)
+[![PoC](https://img.shields.io/badge/settlement%20gate-PoC%20in%20integration-orange.svg)](https://github.com/asastuai/proof-of-context)
+[![License](https://img.shields.io/badge/license-BUSL--1.1-blue.svg)](./LICENSE)
 
-Hybrid architecture: off-chain matching engine + on-chain settlement on Base L2.
-
-</div>
+*Member of the [Aletheia](https://github.com/asastuai/aletheia) stack. Designed to consume [`f_i`](https://github.com/asastuai/proof-of-context)-typed attestations from [Vigil](https://github.com/asastuai/vigil) once integration completes. Today, the on-chain `FreshnessTypes` event schema is landed; horizon enforcement at clear-time is the active integration surface.*
 
 ---
 
 ## What it is
 
-SUR Protocol is a perpetual futures DEX designed for emerging markets — starting with Argentina — where access to derivatives has historically depended on foreign CEX accounts, USD rails, and trust in centralized custodians. SUR brings perp trading on-chain: USDC collateral, tiered and cross-margin liquidation, EIP-712 signed orders, and a hybrid architecture that keeps the order book off-chain (for latency and UX) while settlement, custody, and risk live on-chain (for non-custodial guarantees).
+SUR is a perpetual futures DEX where AI agents are first-class participants and where settlement is being progressively wired against typed attestations from the Aletheia verification spine.
 
-**12 Solidity contracts · 531 passing Foundry tests · Base L2**
+The DEX is hybrid by architecture: off-chain matching for latency, on-chain settlement and custody on Base L2 for non-custodial guarantees. EIP-712 signed orders. USDC collateral. Pyth + Chainlink oracle feeds with deviation checks. **12 Solidity contracts. 531 passing Foundry tests.**
 
-- Live frontend: [sur-protocol.vercel.app](https://sur-protocol.vercel.app) — 15 crypto markets, TradingView charts, real-time price feeds via Binance / Pyth / Chainlink
-- Full perp trading stack: deposits, margin, position management, liquidation engine, insurance fund, oracle router
-- Non-custodial, permissionless, transparent — BUSL-1.1 licensed
+The agent-native part is what differentiates SUR from other perp DEXs:
+
+- An **MCP server** so LLM agents interact with SUR natively through the Model Context Protocol
+- An **intent engine** for agent-readable order construction
+- An **agent-facing API** shaped for agent-side state machines
+- An **SDK** built around agent execution patterns rather than human UIs
+- A **typed-attestation event schema** (`FreshnessTypes` library) that downstream contracts and indexers use to gate on freshness — the wiring of horizon enforcement into the settlement gate is in active integration
+- A **risk guardian** for per-user anti-liquidation defense that will consume Vigil `f_i` attestations once that integration completes
+
+Other perp DEXs let agents call APIs. SUR is being built so agents can post typed claims about *why* they are trading and bind settlement to those claims being valid.
 
 ---
 
-## Agent-Native Layer
+## Roadmap — How SUR consumes Proof of Context
 
-Beyond the perp DEX base layer, SUR exposes four pieces architected for autonomous agents — not humans wrapping an API:
+This section describes the integration target, not the current state. Where the README distinguishes between landed and pending, the badge and this section are the source of truth.
 
-- **MCP Server (25 tools)** — in [`mcp-server/`](mcp-server/). Any MCP-compatible agent (Claude, Eliza, custom) can deposit, trade, manage risk and settle without glue code.
-- **A2A Dark Pool** — on-chain OTC matching for agents with persistent reputation. Agents negotiate privately, settle publicly. Backed by the [proof-of-context](https://github.com/asastuai/proof-of-context) position paper.
-- **Intent Engine** — in [`intent-engine/`](intent-engine/). Natural-language order submission translated to signed EIP-712 transactions. Removes the orchestration layer between LLM reasoning and on-chain execution.
-- **x402 Payment Support** — native agent fee tiers for per-query, per-trade, per-intent usage patterns.
+SUR is a consumer in the Aletheia verification stack. Its settlement layer is being wired to accept attestations typed by the [Proof of Context](https://github.com/asastuai/proof-of-context) framework, which formalizes four freshness dimensions and a settlement gate that enforces them at clear-time.
 
-These sit on top of the perp DEX; they are additive, not a rewrite of the core matching / settlement / liquidation math.
+**`f_i` — input freshness.** Emitted by [Vigil](https://github.com/asastuai/vigil) and other risk producers. Target flow: an agent submits an order whose decision was conditioned on a Vigil signal (oracle health, MEV exposure, liquidation cascade risk); the `f_i` attestation is bound to the order metadata; the settlement gate verifies the signature and the horizon at clear-time; if the attestation aged past horizon, the order does not settle.
+
+**`f_m` — model freshness.** For orders whose decision was conditioned on inference output. Currently informational. Full enforcement pending Phase 3 of [`proof-of-context-impl`](https://github.com/asastuai/proof-of-context-impl) (InferenceReceipt module).
+
+**Execution-context-root.** A Merkle root binding the order's causal antecedents — operator, market, oracle round consumed, signer key. The same primitive PoC names. SUR is the target first production consumer.
+
+### Status of the integration today
+
+| Surface | Status |
+| --- | --- |
+| `libraries/FreshnessTypes.sol` — type constants + canonical event signatures | ✅ Landed |
+| Cross-contract `FreshnessRejected` / `FreshnessCheckPassed` event indexing | ✅ Schema canonical |
+| `OrderSettlement` enforcement of `f_i` horizons at clear-time | 🚧 In active integration |
+| `A2ADarkPool` real-time freshness check from a verified producer | 🚧 In active integration |
+| SDK / agent-api off-chain Vigil signature verification before submission | 🚧 In active integration |
+| `risk-guardian` consumption of Vigil `f_i` for pre-trade gating | 🚧 Designed; binding planned |
+
+The full mapping is in [`docs/proof-of-context-mapping.md`](docs/proof-of-context-mapping.md) and [`docs/MAPPING_4_freshness_event_schema.md`](docs/MAPPING_4_freshness_event_schema.md).
 
 ---
 
 ## Architecture
 
-**Hybrid — off-chain matching + on-chain settlement.**
+Hybrid — off-chain matching + on-chain settlement.
 
 | Layer | Where | Why |
-|-------|-------|-----|
+| --- | --- | --- |
 | Order book | Off-chain (API + engine) | Latency + UX |
-| Matching | Off-chain (engine) | Throughput |
+| Matching | Off-chain (engine, Rust) | Throughput |
 | Settlement | On-chain (Base L2) | Finality + audit |
-| Custody | On-chain (PerpVault) | Non-custodial |
-| Margin + liquidation | On-chain (PerpEngine + Liquidator) | Risk transparency |
+| Custody | On-chain (`PerpVault`) | Non-custodial |
+| Margin + liquidation | On-chain (`PerpEngine` + `Liquidator`) | Risk transparency |
 | Price feeds | On-chain oracle router | Pyth + Chainlink fallback |
+| Settlement gate | On-chain event schema landed; horizon enforcement in integration | PoC alignment |
+| Agent interface | Off-chain (MCP, intent engine, agent-api, SDK) | Native agent execution |
 
 ---
 
@@ -62,24 +82,37 @@ These sit on top of the perp DEX; they are additive, not a rewrite of the core m
 
 ```
 sur-protocol/
-├── contracts/          # Solidity smart contracts (Foundry)
-│   ├── src/            # Contract source files
-│   ├── test/           # Foundry tests (494 passing)
-│   ├── script/         # Deploy scripts
-│   └── foundry.toml    # Foundry config
+├── contracts/          # Solidity smart contracts (Foundry, 531 tests)
 ├── engine/             # Matching engine (Rust)
 ├── api/                # Backend API (Node.js / TypeScript)
-├── web/                # Frontend (Next.js)
+├── web/                # Trading frontend (Next.js)
 ├── demo/               # Live demo → sur-protocol.vercel.app
-└── docs/               # Specs and documentation
+│
+├── agent-api/          # Agent-facing order interface
+├── intent-engine/      # Intent → order construction for agents
+├── mcp-server/         # Model Context Protocol server (LLM agents)
+├── sdk/                # TypeScript SDK shaped for agent execution
+│
+├── keeper/             # Permissionless liquidation keeper
+├── oracle-keeper/      # Oracle update keeper
+├── risk-engine/        # Live position-risk computation
+├── risk-guardian/      # Per-user anti-liquidation agent (Vigil binding planned)
+├── funding-bot/        # Funding rate maintenance
+├── trading-bot/        # Reference market-making agent
+├── copytrade-bot/      # Reference copytrade agent
+├── backtester/         # Strategy backtesting harness
+│
+├── monitoring/         # Ops + observability
+├── deploy/             # Deploy scripts and addresses
+└── docs/               # Specs and protocol documentation
 ```
 
 ---
 
-## Core contracts
+## Core contracts (settlement layer)
 
 | Contract | Purpose | Status |
-|----------|---------|--------|
+| --- | --- | --- |
 | `PerpVault.sol` | USDC collateral custody, deposits, withdrawals | ✅ Complete |
 | `PerpEngine.sol` | Position management, PnL, margin, liquidation | ✅ Complete |
 | `PerpEngineView.sol` | Read-only view lens (bytecode-size optimization) | ✅ Complete |
@@ -88,14 +121,27 @@ sur-protocol/
 | `InsuranceFund.sol` | Bad debt absorption, fund health tracking | ✅ Complete |
 | `AutoDeleveraging.sol` | Last-resort ADL when insurance fund depletes | ✅ Complete |
 | `OracleRouter.sol` | Pyth + Chainlink feeds, deviation checks, normalization | ✅ Complete |
-| `CollateralManager.sol` | Yield-bearing collateral with haircut + liquidation-threshold snapshots | ✅ Complete |
+| `CollateralManager.sol` | Yield-bearing collateral with haircut + liquidation snapshots | ✅ Complete |
 | `TradingVault.sol` | Pooled trading vaults (copy-trading / HLP-style) | ✅ Complete |
-| `A2ADarkPool.sol` | Agent-to-agent OTC with persistent reputation | ✅ Complete |
-| `SurTimelock.sol` | Governance timelock enforcing prospective-only admin updates | ✅ Complete |
+| `A2ADarkPool.sol` | Agent-to-agent OTC matching | ✅ Complete |
+| `SurTimelock.sol` | Governance timelock with prospective-only admin updates | ✅ Complete |
 
-Libraries: `SurMath.sol` (WAD fixed-point math) · `FreshnessTypes.sol` (canonical event schema for freshness-gated settlement).
+Libraries: `SurMath.sol` (WAD fixed-point math) and `FreshnessTypes.sol` (canonical PoC event schema).
 
-**Phase 1 core protocol: complete. Mapping 3 (prospective-only admin parameters) and Mapping 4 (freshness event schema) landed; see `docs/MAPPING_3_*` and `docs/MAPPING_4_*`.**
+---
+
+## Agent execution layer
+
+The pieces that make SUR a venue agents can post into without a human in the loop.
+
+| Component | What it does | Status |
+| --- | --- | --- |
+| **Agent API** | Order submission, balance queries, position tracking — shaped for agent-side state machines | ✅ Live |
+| **Intent Engine** | Translates agent intents (parametric or natural language) into EIP-712 orders | ✅ Live |
+| **MCP Server** | Exposes SUR as tools for any MCP-aware LLM agent (Claude, GPT, others) | ✅ Live |
+| **SDK** | TypeScript primitives for agent execution: signing, retries, attestation binding (in integration) | ✅ Live |
+| **Risk Guardian** | Per-user anti-liquidation agent. Monitors positions and intervenes before the liquidation engine acts. Vigil `f_i` binding planned. | ✅ Live (Aletheia binding in design) |
+| **Reference agents** | `trading-bot` (production-shaped market maker), `copytrade-bot` and `funding-bot` (compact reference implementations). Open-source. | ✅ Live |
 
 ---
 
@@ -103,94 +149,82 @@ Libraries: `SurMath.sol` (WAD fixed-point math) · `FreshnessTypes.sol` (canonic
 
 ### Prerequisites
 
-- [Foundry](https://book.getfoundry.sh/getting-started/installation) (contracts)
-- [Rust](https://rustup.rs/) (matching engine)
-- [Node.js 20+](https://nodejs.org/) (API + frontend)
+* [Foundry](https://book.getfoundry.sh/getting-started/installation) (contracts)
+* [Rust](https://rustup.rs/) (matching engine)
+* [Node.js 20+](https://nodejs.org/) (API, frontend, agent layer)
 
 ### Contracts
 
 ```bash
 cd contracts
-
-# Install OpenZeppelin dependencies
 forge install OpenZeppelin/openzeppelin-contracts --no-commit
-
-# Build
 forge build
-
-# Test (494 passing)
-forge test -vvv
-
-# Gas report
+forge test -vvv          # 531 passing
 forge test --gas-report
+```
 
-# Deploy to Base Sepolia testnet
+### Deploy to Base Sepolia
+
+```bash
 forge script script/DeploySur.s.sol:DeploySur \
   --rpc-url base_sepolia --broadcast --verify
 ```
 
-### Environment variables
+### Environment
 
-```bash
-cp .env.example .env
-# PRIVATE_KEY=your_deployer_private_key
-# BASE_SEPOLIA_RPC_URL=https://sepolia.base.org
-# BASESCAN_API_KEY=your_basescan_key
-# USDC_ADDRESS=0x036CbD53842c5426634e7929541eC2318f3dCF7e  # Base Sepolia USDC
-```
-
----
-
-## Threat model and integration roadmap
-
-SUR protects custody, settlement finality, margin / liquidation correctness, and oracle integrity (see [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md) for the full articulation). What it does *not* currently protect against — and what a forthcoming integration is designed to close — is a class of failures where a computationally correct operation clears settlement against *stale contextual state* (oracle round drift between match-time and settle-time, timing-manipulated liquidations, retroactive admin-parameter updates on open positions, counterparty-state drift, settlement-window griefing).
-
-This gap is the subject of a position paper published as [asastuai/proof-of-context](https://github.com/asastuai/proof-of-context) (v0.6) and is being mapped onto SUR-specific integration points in [`docs/proof-of-context-mapping.md`](docs/proof-of-context-mapping.md). The integration is phased, additive, and does not alter the core perp-futures pricing, matching, or liquidation math; it gates *settlement* on freshness rather than changing what is being computed.
-
-The roadmap progresses from the cheapest items (prospective-only admin parameters; documentation framing) through moderate-complexity items (triple-anchor timing on liquidations; freshness-typed event schema) to the first end-to-end PoC-gated canary market. No claim is made that any of these items are live on SUR today — they are the explicit, publicly-documented work-in-progress.
+Copy `.env.example` to `.env` and fill in your values. The committed example documents the canonical variables. Aletheia integration variables (Vigil operator public key for off-chain `f_i` verification, etc.) will land in `.env.example` once the integration is wired.
 
 ---
 
 ## Network
 
-- **Testnet:** Base Sepolia (live, integrated with frontend)
-- **Mainnet:** Base (target Phase 4)
+| Network | Status |
+| --- | --- |
+| Base Sepolia (testnet) | ✅ Live, integrated with frontend |
+| Base (mainnet) | Pending audit completion |
 
 ---
 
-## Related repositories
+## Aletheia stack
 
-- [**asastuai**](https://github.com/asastuai/asastuai) — Developer profile and full portfolio
-- [**liquidclaw-amm-**](https://github.com/asastuai/liquidclaw-amm-) — ve(3,3) AMM DEX on BSC + Base
-- [**kybalion**](https://github.com/asastuai/kybalion) — Hermetic Computing (Rust research framework)
+SUR is the consumer flagship of the Aletheia verification stack. The other repos:
+
+* **[Proof of Context](https://github.com/asastuai/proof-of-context)** — verification spine. The framework whose primitives type SUR's settlement gate.
+* **[`proof-of-context-impl`](https://github.com/asastuai/proof-of-context-impl)** — Rust reference implementation of the spine primitives.
+* **[Vigil](https://github.com/asastuai/vigil)** — risk producer. Emits Ed25519-signed `f_i` attestations targeted by SUR's risk guardian and settlement gate.
+* **[TrustLayer](https://github.com/asastuai/TrustLayer)** — agent reputation aggregator.
+* **[PayClaw](https://github.com/asastuai/payclaw)** — agent wallet SDK (npm).
+* **[BaseOracle](https://github.com/asastuai/BaseOracle)** — pay-per-query market data.
+
+## Adjacent research
+
+* **[Hermetic Foundations of Aletheia](https://github.com/asastuai/aletheia/blob/main/BRIDGE.md)** — conceptual motivation for why the freshness dimensions (`f_c`, `f_m`, `f_i`, `f_s`) are well-named and not arbitrary.
+* **[Kybalion](https://github.com/asastuai/kybalion)** — Hermetic Computing research framework (Rust). Independent of Aletheia; bridges to it through the document above.
+
+---
+
+## Origins
+
+SUR was first prototyped as a perpetual futures venue for emerging-market traders with limited access to non-custodial derivatives. Buenos Aires was the starting context, not the limit. The architecture survived its repositioning toward the agent economy because the underlying primitives — non-custodial collateral, EIP-712 signed orders, oracle-routed price feeds, hybrid matching — are equally load-bearing for both audiences. The agent-native layer was added because that is where the volume is going, not because the original thesis broke.
 
 ---
 
 ## License
 
-BUSL-1.1 (Business Source License). See [LICENSE](LICENSE).
-
-Under BUSL-1.1, the source code is available for review, research, and non-commercial use. **Commercial use requires a separate license** — see below.
+[BUSL-1.1](./LICENSE) (Business Source License). The `LICENSE` file is the canonical text from MariaDB's BSL 1.1 distribution. Converts to a permissive license after the change date specified in the file.
 
 ---
 
-## Commercial Use & Licensing
+## Commercial use and licensing
 
-SUR Protocol is available for commercial licensing under several structures, depending on the licensee's intended use, timeline, and scope:
+SUR is available for commercial licensing under several structures (non-exclusive, exclusive, full IP acquisition, acquihire). What is included in any licensed package goes beyond the public repository: production deployment configs, ops runbooks, knowledge-transfer hours with the author, and private-repo access for the licensee's internal operations.
 
-- **Non-exclusive commercial license** — perpetual rights to deploy, modify, and operate the protocol under the licensee's own branding. Other licensees may operate in parallel. Recommended for most buyers. Indicative range: **$150k–$250k USD**.
-- **Exclusive commercial license** — exclusivity scoped by geography, chain, or vertical for a negotiated time window. Indicative range: **$300k–$500k USD**.
-- **Full IP acquisition** — full transfer of the codebase and associated rights. Indicative range: **$500k–$1M+ USD** depending on scope.
-- **Acquihire** — codebase transfer plus author joins the acquiring team as technical lead. Structure negotiated per deal.
+**Who buys this.** Teams launching a perp DEX on a new L2, white-label providers packaging perp infrastructure, exchanges adding derivatives, or investors funding portfolio companies that need the tech stack. Serious inbound welcome. Anonymous or rushed approaches will not be engaged.
 
-What's included in any licensed package goes beyond the public repository: production deployment configs, ops runbooks, knowledge-transfer hours with the author, and private-repo access for the licensee's internal operations.
-
-**Who buys this.** Teams launching a perp DEX on a new L2, white-label providers packaging perp infrastructure, exchanges looking to add derivatives, or investors funding portfolio companies that need the tech stack. Serious inbound welcome; anonymous / rushed approaches will not be engaged.
-
-**Contact:** **`juancmaisu@outlook.com`** — preferred subject line: "SUR Protocol licensing inquiry". A technical brief is available on request after an initial exchange.
+**Contact.** `juancmaisu@outlook.com`. Preferred subject line: "SUR Protocol licensing inquiry". Detailed terms and a technical brief are available on request after an initial exchange.
 
 The author ([Juan Cruz Maisu](https://github.com/asastuai)) is based in Buenos Aires, Argentina, and operates under Argentinian software-export tax regime for international licensing transactions.
 
 ---
 
-Built by [Juan Cruz Maisu](https://github.com/asastuai) · Buenos Aires, Argentina
+Built by [Juan Cruz Maisu](https://github.com/asastuai) · Buenos Aires
