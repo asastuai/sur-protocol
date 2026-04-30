@@ -34,7 +34,7 @@ Other perp DEXs let agents call APIs. SUR is being built so agents can post type
 
 ---
 
-## Roadmap — How SUR consumes Proof of Context
+## ◊ Roadmap — How SUR consumes Proof of Context
 
 This section describes the integration target, not the current state. Where the README distinguishes between landed and pending, the badge and this section are the source of truth.
 
@@ -185,7 +185,7 @@ Copy `.env.example` to `.env` and fill in your values. The committed example doc
 
 ---
 
-## Aletheia stack
+## ❖ Aletheia stack
 
 SUR is the consumer flagship of the Aletheia verification stack. The other repos:
 
@@ -228,3 +228,5 @@ The author ([Juan Cruz Maisu](https://github.com/asastuai)) is based in Buenos A
 ---
 
 Built by [Juan Cruz Maisu](https://github.com/asastuai) · Buenos Aires
+
+Juan Cruz Maisú ♥
