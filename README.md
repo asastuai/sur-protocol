@@ -27,24 +27,24 @@ The agent-native part is what differentiates SUR from other perp DEXs:
 - An **intent engine** for agent-readable order construction
 - An **agent-facing API** shaped for agent-side state machines
 - An **SDK** built around agent execution patterns rather than human UIs
-- A **typed-attestation event schema** (`FreshnessTypes` library) that downstream contracts and indexers use to gate on freshness — the wiring of horizon enforcement into the settlement gate is in active integration
+- A **typed-attestation event schema** (`FreshnessTypes` library) that downstream contracts and indexers use to gate on freshness (the wiring of horizon enforcement into the settlement gate is in active integration)
 - A **risk guardian** for per-user anti-liquidation defense that will consume Vigil `f_i` attestations once that integration completes
 
 Other perp DEXs let agents call APIs. SUR is being built so agents can post typed claims about *why* they are trading and bind settlement to those claims being valid.
 
 ---
 
-## ◊ Roadmap — How SUR consumes Proof of Context
+## ◊ Roadmap: How SUR consumes Proof of Context
 
 This section describes the integration target, not the current state. Where the README distinguishes between landed and pending, the badge and this section are the source of truth.
 
 SUR is a consumer in the Aletheia verification stack. Its settlement layer is being wired to accept attestations typed by the [Proof of Context](https://github.com/asastuai/proof-of-context) framework, which formalizes four freshness dimensions and a settlement gate that enforces them at clear-time.
 
-**`f_i` — input freshness.** Emitted by [Vigil](https://github.com/asastuai/vigil) and other risk producers. Target flow: an agent submits an order whose decision was conditioned on a Vigil signal (oracle health, MEV exposure, liquidation cascade risk); the `f_i` attestation is bound to the order metadata; the settlement gate verifies the signature and the horizon at clear-time; if the attestation aged past horizon, the order does not settle.
+**`f_i` (input freshness).** Emitted by [Vigil](https://github.com/asastuai/vigil) and other risk producers. Target flow: an agent submits an order whose decision was conditioned on a Vigil signal (oracle health, MEV exposure, liquidation cascade risk); the `f_i` attestation is bound to the order metadata; the settlement gate verifies the signature and the horizon at clear-time; if the attestation aged past horizon, the order does not settle.
 
-**`f_m` — model freshness.** For orders whose decision was conditioned on inference output. Currently informational. Full enforcement pending Phase 3 of [`proof-of-context-impl`](https://github.com/asastuai/proof-of-context-impl) (InferenceReceipt module).
+**`f_m` (model freshness).** For orders whose decision was conditioned on inference output. Currently informational. Full enforcement pending Phase 3 of [`proof-of-context-impl`](https://github.com/asastuai/proof-of-context-impl) (InferenceReceipt module).
 
-**Execution-context-root.** A Merkle root binding the order's causal antecedents — operator, market, oracle round consumed, signer key. The same primitive PoC names. SUR is the target first production consumer.
+**Execution-context-root.** A Merkle root binding the order's causal antecedents (operator, market, oracle round consumed, signer key). The same primitive PoC names. SUR is the target first production consumer.
 
 ### Status of the integration today
 
@@ -63,7 +63,7 @@ The full mapping is in [`docs/proof-of-context-mapping.md`](docs/proof-of-contex
 
 ## Architecture
 
-Hybrid — off-chain matching + on-chain settlement.
+Hybrid: off-chain matching + on-chain settlement.
 
 | Layer | Where | Why |
 | --- | --- | --- |
@@ -189,23 +189,23 @@ Copy `.env.example` to `.env` and fill in your values. The committed example doc
 
 SUR is the consumer flagship of the Aletheia verification stack. The other repos:
 
-* **[Proof of Context](https://github.com/asastuai/proof-of-context)** — verification spine. The framework whose primitives type SUR's settlement gate.
-* **[`proof-of-context-impl`](https://github.com/asastuai/proof-of-context-impl)** — Rust reference implementation of the spine primitives.
-* **[Vigil](https://github.com/asastuai/vigil)** — risk producer. Emits Ed25519-signed `f_i` attestations targeted by SUR's risk guardian and settlement gate.
-* **[TrustLayer](https://github.com/asastuai/TrustLayer)** — agent reputation aggregator.
-* **[PayClaw](https://github.com/asastuai/payclaw)** — agent wallet SDK (npm).
-* **[BaseOracle](https://github.com/asastuai/BaseOracle)** — pay-per-query market data.
+* **[Proof of Context](https://github.com/asastuai/proof-of-context)**: verification spine. The framework whose primitives type SUR's settlement gate.
+* **[`proof-of-context-impl`](https://github.com/asastuai/proof-of-context-impl)**: Rust reference implementation of the spine primitives.
+* **[Vigil](https://github.com/asastuai/vigil)**: risk producer. Emits Ed25519-signed `f_i` attestations targeted by SUR's risk guardian and settlement gate.
+* **[TrustLayer](https://github.com/asastuai/TrustLayer)**: agent reputation aggregator.
+* **[PayClaw](https://github.com/asastuai/payclaw)**: agent wallet SDK (npm).
+* **[BaseOracle](https://github.com/asastuai/BaseOracle)**: pay-per-query market data.
 
 ## Adjacent research
 
-* **[Hermetic Foundations of Aletheia](https://github.com/asastuai/aletheia/blob/main/BRIDGE.md)** — conceptual motivation for why the freshness dimensions (`f_c`, `f_m`, `f_i`, `f_s`) are well-named and not arbitrary.
-* **[Kybalion](https://github.com/asastuai/kybalion)** — Hermetic Computing research framework (Rust). Independent of Aletheia; bridges to it through the document above.
+* **[Hermetic Foundations of Aletheia](https://github.com/asastuai/aletheia/blob/main/BRIDGE.md)**: conceptual motivation for why the freshness dimensions (`f_c`, `f_m`, `f_i`, `f_s`) are well-named and not arbitrary.
+* **[Kybalion](https://github.com/asastuai/kybalion)**: Hermetic Computing research framework (Rust). Independent of Aletheia; bridges to it through the document above.
 
 ---
 
 ## Origins
 
-SUR was first prototyped as a perpetual futures venue for emerging-market traders with limited access to non-custodial derivatives. Buenos Aires was the starting context, not the limit. The architecture survived its repositioning toward the agent economy because the underlying primitives — non-custodial collateral, EIP-712 signed orders, oracle-routed price feeds, hybrid matching — are equally load-bearing for both audiences. The agent-native layer was added because that is where the volume is going, not because the original thesis broke.
+SUR was first prototyped as a perpetual futures venue for emerging-market traders with limited access to non-custodial derivatives. Buenos Aires was the starting context, not the limit. The architecture survived its repositioning toward the agent economy because the underlying primitives (non-custodial collateral, EIP-712 signed orders, oracle-routed price feeds, hybrid matching) are equally load-bearing for both audiences. The agent-native layer was added because that is where the volume is going, not because the original thesis broke.
 
 ---
 
